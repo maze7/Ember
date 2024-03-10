@@ -130,8 +130,7 @@ RenderDevice::RenderDevice(Ember::Window& window) : m_window(window) {
     // create window surface
     VkSurfaceKHR surface;
     if (SDL_Vulkan_CreateSurface(window.native_handle(), m_instance, &surface) != SDL_TRUE) {
-        Log::error("Failed to create window surface: {}", SDL_GetError());
-        return;
+        throw std::runtime_error(std::string("failed to create window surface: ") + SDL_GetError());
     }
 
     m_surface = vk::SurfaceKHR(surface);
