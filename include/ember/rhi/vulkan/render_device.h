@@ -1,0 +1,61 @@
+#pragma once
+
+#include "vulkan/vulkan.hpp"
+#include "vk_mem_alloc.h"
+
+namespace Ember
+{
+    class Window;
+    class RenderDevice
+    {
+    public:
+        static constexpr u32 MAX_FRAMES_IN_FLIGHT = 2;
+
+        RenderDevice(Window& window);
+        ~RenderDevice();
+
+        u32 new_frame();
+        void wait_idle();
+        void present();
+        void destroy();
+
+    private:
+        void create_swapchain();
+        void destroy_swapchain();
+        void create_framebuffers();
+        void recreate_swapchain();
+
+    private:
+        VmaAllocator                    m_vma;
+        Window&                         m_window;
+        u32                             m_frame;
+        u32                              m_swapchain_image;
+        bool                            m_initialized = false;
+        bool                            m_resized = false;
+
+        vk::Instance                    m_instance;
+        vk::Device                      m_device;
+        vk::PhysicalDevice              m_physical_device;
+        vk::Queue                       m_graphics_queue, m_present_queue;
+        vk::DispatchLoaderDynamic       m_dispatch_loader;
+        vk::RenderPass                  m_render_pass;
+
+        // Swapchain
+        vk::SurfaceKHR                  m_surface;
+        vk::SwapchainKHR                m_swapchain;
+        vk::Format                      m_swapchain_format;
+        vk::Extent2D                    m_swapchain_extent;
+        std::vector<vk::Image>          m_swapchain_images;
+        std::vector<vk::ImageView>      m_swapchain_image_views;
+        std::vector<vk::Framebuffer>    m_swapchain_framebuffers;
+
+        // Sync Objects (one for each frame in flight)
+        std::vector<vk::Semaphore>			m_image_available_semaphores;
+        std::vector<vk::Semaphore> 			m_render_finished_semaphores;
+        std::vector<vk::Fence>				m_in_flight_fences;
+
+#if defined(EMBER_DEBUG) || defined(EMBER_PROFILE)
+        vk::DebugUtilsMessengerEXT      m_debug_messenger;
+#endif
+    };
+}

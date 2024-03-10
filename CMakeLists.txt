@@ -45,10 +45,12 @@ if (EMBER_USE_VULKAN)
         PUBLIC
             "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/vk_mem_alloc.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/rhi/vulkan/vk_mem_alloc.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/buffer_vulkan.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/command_buffer_vulkan.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/render_device_vulkan.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/shader_vulkan.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/buffer.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/command_buffer.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/render_device.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/rhi/vulkan/render_device.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/shader.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/vulkan_util.h"
     )
 endif()
 
@@ -63,7 +65,7 @@ target_include_directories(Ember PUBLIC lib/glm/glm)
 target_link_libraries(Ember PUBLIC glm::glm)
 
 # compile definitions for different build configurations
-target_compile_definitions(Ember PRIVATE
+target_compile_definitions(Ember PUBLIC
     $<$<CONFIG:Debug>:EMBER_DEBUG>
     $<$<CONFIG:Profile>:EMBER_PROFILE>
     $<$<CONFIG:Release>:EMBER_RELEASE>
