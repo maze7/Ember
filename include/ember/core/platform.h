@@ -1,0 +1,50 @@
+#pragma once
+
+#include <cstdint>
+
+#if !defined(_MSC_VER)
+#   include <signal.h>
+#endif
+
+#if defined(_MSC_VER)
+# 	define EMBER_INLINE								inline
+# 	define EMBER_FINLINE							__forceinline
+#	define EMBER_DEBUG_BREAK()						__debugbreak();
+#	define EMBER_DISABLE_WARNING(warning_number)	__pragma(warning(disable: warning_number))
+#else
+# 	define EMBER_INLINE								inline
+# 	define EMBER_FINLINE							always_inline
+#	define EMBER_DEBUG_BREAK()						raise(SIGTRAP);
+#	define EMBER_DISABLE_WARNING(warning_number)
+#endif
+
+#define EMBER_STR(L) 								#L
+#define EMBER_MAKESTR(L)							EMBER_STR(L)
+
+#if !defined(NDEBUG) || defined(EMBER_PROFILE)
+#	define EMBER_ASSERT(condition) 	                if (!(condition)) { 											   		  \
+									                	ember::Log::error(__FILE__"(" EMBER_MAKESTR(__LINE__) "): ASSERT");   \
+									                	EMBER_DEBUG_BREAK();                        				   		  \
+									                }
+#else
+# 	define EMBER_ASSERT(condition)			        (condition) // asserts are stripped for release builds
+#endif
+
+// utility macro to determine the size of a c-style array
+#define EMBER_ARRAY_SIZE(array)                     (sizeof(array)/sizeof((array)[0]))
+
+// unsigned integers
+using u8  	= uint8_t;
+using u16 	= uint16_t;
+using u32 	= uint32_t;
+using u64 	= uint64_t;
+
+// signed integers
+using i8  	= int8_t;
+using i16 	= int16_t;
+using i32 	= int32_t;
+using i64 	= int64_t;
+
+// sized floats
+using f32 	= float;
+using f64 	= double;
