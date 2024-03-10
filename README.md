@@ -1,5 +1,5 @@
 ## Ember
-A small 2D C++ Game Library, using few dependencies and simple code to maintain easy building and portability.
+A small 2D C++ Gamedev Library, with a focus on being lightweight and efficient.
 
 ### Building
 
