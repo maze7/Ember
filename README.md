@@ -1,8 +1,6 @@
 ## Ember
 A small 2D C++ Game Library, using few dependencies and simple code to maintain easy building and portability.
 
-** This will likely see breaking changes and is not currently ready for production use! **
-
 ### Building
 
 - Requires C++20 and CMake 3.5+
