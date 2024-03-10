@@ -12,7 +12,9 @@ add_library(Ember
     src/core/log.cpp
     include/ember/core/log.h
     include/ember/core/platform.h
-    include/ember/rhi.h
+        include/ember/rhi/rhi.h
+        include/ember/system/window.h
+        src/system/window.cpp
 )
 
 # Configure Include directories
@@ -34,10 +36,10 @@ if (EMBER_USE_VULKAN)
     target_compile_definitions(Ember PUBLIC EMBER_VULKAN)
     target_sources(Ember
         PUBLIC
-        include/ember/vulkan/buffer_vulkan.h
-        include/ember/vulkan/command_buffer_vulkan.h
-        include/ember/vulkan/render_device_vulkan.h
-        include/ember/vulkan/shader_vulkan.h
+            include/ember/rhi/vulkan/buffer_vulkan.h
+            include/ember/rhi/vulkan/command_buffer_vulkan.h
+            include/ember/rhi/vulkan/render_device_vulkan.h
+            include/ember/rhi/vulkan/shader_vulkan.h
     )
 endif()
 
