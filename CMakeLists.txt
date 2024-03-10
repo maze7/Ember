@@ -43,6 +43,8 @@ if (EMBER_USE_VULKAN)
     target_compile_definitions(Ember PUBLIC EMBER_VULKAN)
     target_sources(Ember
         PUBLIC
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/vk_mem_alloc.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/rhi/vulkan/vk_mem_alloc.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/buffer_vulkan.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/command_buffer_vulkan.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/render_device_vulkan.h"
