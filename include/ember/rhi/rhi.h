@@ -94,10 +94,10 @@ namespace Ember
 }
 
 #ifdef EMBER_VULKAN
+#   include "rhi/vulkan/render_device.h"
 #   include "rhi/vulkan/buffer.h"
 #   include "rhi/vulkan/shader.h"
 #   include "rhi/vulkan/command_buffer.h"
-#   include "rhi/vulkan/render_device.h"
 #elif EMBER_DX12
     // not implemented yet
 #endif

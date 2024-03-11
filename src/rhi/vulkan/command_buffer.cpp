@@ -90,7 +90,7 @@ CommandBufferRing::~CommandBufferRing() {
     if (m_initialized) destroy();
 }
 
-CommandBuffer* CommandBufferRing::acquire(u32 frame, bool begin) {
+CommandBuffer* CommandBufferRing::get_command_buffer(u32 frame, bool begin) {
     auto cb = &m_command_buffers[frame * k_buffers_per_pool];
 
     if (begin) {
@@ -100,7 +100,7 @@ CommandBuffer* CommandBufferRing::acquire(u32 frame, bool begin) {
     return cb;
 }
 
-CommandBuffer* CommandBufferRing::acquire_instant(u32 frame, bool begin) {
+CommandBuffer* CommandBufferRing::get_command_buffer_instant(u32 frame, bool begin) {
     auto cb = &m_command_buffers[frame * k_buffers_per_pool + 1];
     return cb;
 }

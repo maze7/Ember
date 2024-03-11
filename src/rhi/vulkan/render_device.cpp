@@ -401,7 +401,7 @@ u32 RenderDevice::new_frame() {
     // wait until previous frame has finished being rendered to the screen, then reset the fence
     auto _ = m_device.waitForFences(m_in_flight_fences[m_frame], true, UINT64_MAX);
 
-    // acquire a frame
+    // get_command_buffer a frame
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, m_image_available_semaphores[m_frame], nullptr,
                                             &m_swapchain_image);
 
@@ -409,7 +409,7 @@ u32 RenderDevice::new_frame() {
         recreate_swapchain(); // rebuild swapchain as image size does not match surface size
         return m_frame;
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-        throw std::runtime_error("fialed to acquire swapchain image");
+        throw std::runtime_error("fialed to get_command_buffer swapchain image");
     }
 
     // reset the in flight fence, this needs to be after swapchain resizing to avoid a deadlock
@@ -479,4 +479,30 @@ void RenderDevice::destroy() {
     m_instance.destroy();
 
     m_initialized = false;
+}
+
+CommandBuffer *RenderDevice::get_command_buffer(QueueType type, bool begin) {
+    auto cb = m_cmd_ring->get_command_buffer(m_frame, begin);
+
+    // TODO(Cal): TEMP HACK - Should this exist in the command buffer?
+    // The answer is no.
+    cb->m_framebuffer = m_swapchain_framebuffers[m_swapchain_image];
+    cb->m_pass = m_render_pass;
+
+    return cb;
+}
+
+CommandBuffer *RenderDevice::get_command_buffer_instant() {
+    auto cb = m_cmd_ring->get_command_buffer_instant(m_frame, true);
+    return cb;
+}
+
+void RenderDevice::submit(CommandBuffer *cb) {
+    auto buf = (CommandBuffer*) cb;
+
+    // automatically end the command buffer if it wasn't ended
+    if (buf->m_recording)
+        buf->end();
+
+    m_pending_cmds.push_back(buf);
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "rhi/rhi.h"
 #include "vulkan/vulkan.hpp"
 #include "vk_mem_alloc.h"
 
@@ -22,6 +23,11 @@ namespace Ember
         void wait_idle();
         void present();
         void destroy();
+
+        // CommandBuffers
+        void submit(CommandBuffer* cb);
+        CommandBuffer* get_command_buffer(QueueType type = QueueType::Graphics, bool begin = false);
+        CommandBuffer* get_command_buffer_instant();
 
         // TODO: This is temporary, RenderPasses will need to be abstracted.
         vk::RenderPass default_render_pass() const { return m_render_pass; }

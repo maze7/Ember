@@ -59,8 +59,8 @@ namespace Ember
         void destroy();
         void reset_pools(u32 frame);
 
-        CommandBuffer* acquire(u32 frame, bool begin);
-        CommandBuffer* acquire_instant(u32 frame, bool begin);
+        CommandBuffer* get_command_buffer(u32 frame, bool begin);
+        CommandBuffer* get_command_buffer_instant(u32 frame, bool begin);
 
     private:
         friend class RenderDevice;
