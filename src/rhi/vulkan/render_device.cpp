@@ -2,6 +2,7 @@
 #include "core/log.h"
 #include "system/window.h"
 #include "rhi/vulkan/render_device.h"
+#include "rhi/vulkan/command_buffer.h"
 #include "rhi/vulkan/vulkan_util.h"
 #include <SDL2/SDL_vulkan.h>
 #include <vector>
@@ -198,7 +199,8 @@ RenderDevice::RenderDevice(Ember::Window& window) : m_window(window) {
     m_present_queue = m_device.getQueue(indices.present.value(), 0);
 
     // create command buffers
-    // command_buffer_ring.init(this, m_device, queue_families(m_physical_device, m_surface).graphics.value());
+    m_cmd_ring = std::make_unique<CommandBufferRing>();
+    m_cmd_ring->init(this, m_device, indices.graphics.value());
 
     // create swapchain
     create_swapchain();
@@ -236,10 +238,10 @@ RenderDevice::RenderDevice(Ember::Window& window) : m_window(window) {
     create_framebuffers();
 
     // create sync objects
-    m_in_flight_fences.resize(MAX_FRAMES_IN_FLIGHT);
-    m_render_finished_semaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    m_image_available_semaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    m_in_flight_fences.resize(k_max_frames_in_flight);
+    m_render_finished_semaphores.resize(k_max_frames_in_flight);
+    m_image_available_semaphores.resize(k_max_frames_in_flight);
+    for (u32 i = 0; i < k_max_frames_in_flight; i++) {
         m_in_flight_fences[i] = m_device.createFence(vk::FenceCreateInfo(vk::FenceCreateFlagBits::eSignaled));
         m_image_available_semaphores[i] = m_device.createSemaphore({});
         m_render_finished_semaphores[i] = m_device.createSemaphore({});
@@ -414,17 +416,16 @@ u32 RenderDevice::new_frame() {
     m_device.resetFences(m_in_flight_fences[m_frame]);
 
     // reset command pool
-    //command_buffer_ring.reset_pools(m_frame);
+    m_cmd_ring->reset_pools(m_frame);
 
     return m_frame;
 }
 
 void RenderDevice::present() {
-//  std::vector<vk::CommandBuffer> queued_buffers(m_pending_cmds.size());
-    std::vector<vk::CommandBuffer> queued_buffers;
-//    for (u32 i = 0; i < m_pending_cmds.size(); i++) {
-//        queued_buffers[i] = m_pending_cmds[i]->m_cmd;
-//    }
+    std::vector<vk::CommandBuffer> queued_buffers(m_pending_cmds.size());
+    for (u32 i = 0; i < m_pending_cmds.size(); i++) {
+        queued_buffers[i] = m_pending_cmds[i]->m_cmd;
+    }
 
     // configure wait stages
     vk::PipelineStageFlags wait_stages[] = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
@@ -444,10 +445,11 @@ void RenderDevice::present() {
         throw std::runtime_error("failed to present swapchain image");
     }
 
-    //m_pending_cmds.clear();
+    // clear queued commands
+    m_pending_cmds.clear();
 
     // advance frame counter
-    m_frame = (m_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+    m_frame = (m_frame + 1) % k_max_frames_in_flight;
 }
 
 void RenderDevice::wait_idle() {
@@ -457,12 +459,11 @@ void RenderDevice::wait_idle() {
 void RenderDevice::destroy() {
     wait_idle(); // wait until GPU is idle before be start destroying resources
 
-    //command_buffer_ring.destroy();
-
+    m_cmd_ring->destroy();
     vmaDestroyAllocator(m_vma);
 
     // destroy sync objects
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    for (int i = 0; i < k_max_frames_in_flight; i++) {
         m_device.destroySemaphore(m_image_available_semaphores[i]);
         m_device.destroySemaphore(m_render_finished_semaphores[i]);
         m_device.destroyFence(m_in_flight_fences[i]);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "log.h"
 
 #if !defined(_MSC_VER)
 #   include <signal.h>

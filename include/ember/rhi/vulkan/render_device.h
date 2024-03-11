@@ -5,11 +5,15 @@
 
 namespace Ember
 {
+    // forward declarations
     class Window;
+    class CommandBuffer;
+    class CommandBufferRing;
+
     class RenderDevice
     {
     public:
-        static constexpr u32 MAX_FRAMES_IN_FLIGHT = 2;
+        static constexpr u32 k_max_frames_in_flight = 2;
 
         RenderDevice(Window& window);
         ~RenderDevice();
@@ -18,6 +22,10 @@ namespace Ember
         void wait_idle();
         void present();
         void destroy();
+
+        // TODO: This is temporary, RenderPasses will need to be abstracted.
+        vk::RenderPass default_render_pass() const { return m_render_pass; }
+        vk::Extent2D swapchain_extent() const { return m_swapchain_extent; }
 
     private:
         void create_swapchain();
@@ -50,9 +58,12 @@ namespace Ember
         std::vector<vk::Framebuffer>    m_swapchain_framebuffers;
 
         // Sync Objects (one for each frame in flight)
-        std::vector<vk::Semaphore>			m_image_available_semaphores;
-        std::vector<vk::Semaphore> 			m_render_finished_semaphores;
-        std::vector<vk::Fence>				m_in_flight_fences;
+        std::vector<vk::Semaphore>		m_image_available_semaphores;
+        std::vector<vk::Semaphore> 		m_render_finished_semaphores;
+        std::vector<vk::Fence>			m_in_flight_fences;
+        std::vector<CommandBuffer*>     m_pending_cmds;
+
+        std::unique_ptr<CommandBufferRing> m_cmd_ring;
 
 #if defined(EMBER_DEBUG) || defined(EMBER_PROFILE)
         vk::DebugUtilsMessengerEXT      m_debug_messenger;
