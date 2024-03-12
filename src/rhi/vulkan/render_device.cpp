@@ -3,6 +3,7 @@
 #include "system/window.h"
 #include "rhi/vulkan/render_device.h"
 #include "rhi/vulkan/command_buffer.h"
+#include "rhi/vulkan/command_buffer_ring.h"
 #include "rhi/vulkan/vulkan_util.h"
 #include <SDL2/SDL_vulkan.h>
 #include <vector>
