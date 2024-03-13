@@ -17,5 +17,6 @@ namespace Ember
 
         u64                     size = 0;
         u8*                     data = nullptr;
+        i64                     parent = -1;
     };
 }

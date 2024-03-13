@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rhi/rhi.h"
+#include "core/pool.h"
 #include "vulkan/vulkan.hpp"
 #include "vk_mem_alloc.h"
 
@@ -8,6 +9,7 @@ namespace Ember
 {
     // forward declarations
     class Window;
+    class Shader;
     class CommandBuffer;
     class CommandBufferRing;
 
@@ -24,10 +26,15 @@ namespace Ember
         void present();
         void destroy();
 
-        // CommandBuffers
+        // Command Buffers
         void submit(CommandBuffer* cb);
         CommandBuffer* get_command_buffer(QueueType type = QueueType::Graphics, bool begin = false);
         CommandBuffer* get_command_buffer_instant();
+
+        // Create, Access and Destroy Shader (PSO) objects
+        Handle<Shader> create_shader(const ShaderDef& def);
+        Shader* get_shader(Handle<Shader> handle);
+        void destroy_shader(Handle<Shader> handle);
 
         // TODO: This is temporary, RenderPasses will need to be abstracted.
         vk::RenderPass default_render_pass() const { return m_render_pass; }
@@ -68,8 +75,10 @@ namespace Ember
         std::vector<vk::Semaphore> 		m_render_finished_semaphores;
         std::vector<vk::Fence>			m_in_flight_fences;
         std::vector<CommandBuffer*>     m_pending_cmds;
+        std::unique_ptr<CommandBufferRing>  m_cmd_ring;
 
-        std::unique_ptr<CommandBufferRing> m_cmd_ring;
+        // GPU Resources
+        Pool<Shader>                    m_shaders;
 
 #if defined(EMBER_DEBUG) || defined(EMBER_PROFILE)
         vk::DebugUtilsMessengerEXT      m_debug_messenger;

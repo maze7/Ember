@@ -64,13 +64,6 @@ namespace Ember
     // Configuration Struct for a Shader (PSO)
     struct ShaderDef
     {
-        // Defines a shader module (vertex shader, fragment shader, etc.) within a PSO
-        struct Module
-        {
-            std::vector<char> bytecode;
-            const char*       entry = "main";
-        };
-
         // Defines a Vertex Attribute
         struct VertexAttribute
         {
@@ -86,8 +79,8 @@ namespace Ember
         };
 
         const char* name;
-        Module      vertex;
-        Module      fragment;
+        std::vector<char>  vertex;
+        std::vector<char>  fragment;
         std::vector<VertexBinding> vertex_bindings;
         //std::vector<Handle<DescriptorSet>> descriptor_sets;
     };

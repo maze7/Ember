@@ -4,6 +4,7 @@
 #include "rhi/vulkan/render_device.h"
 #include "rhi/vulkan/command_buffer.h"
 #include "rhi/vulkan/command_buffer_ring.h"
+#include "rhi/vulkan/shader.h"
 #include "rhi/vulkan/vulkan_util.h"
 #include <SDL2/SDL_vulkan.h>
 #include <vector>
@@ -506,4 +507,121 @@ void RenderDevice::submit(CommandBuffer *cb) {
         buf->end();
 
     m_pending_cmds.push_back(buf);
+}
+
+Handle<Shader> RenderDevice::create_shader(const ShaderDef &def) {
+    // module create info
+    vk::ShaderModuleCreateInfo vertex_module_info({}, def.vertex.size(), (const u32*)def.vertex.data());
+    vk::ShaderModuleCreateInfo fragment_module_info({}, def.fragment.size(), (const u32*)def.fragment.data());
+
+    // create shader modules
+    auto vertex_module = m_device.createShaderModule(vertex_module_info);
+    auto fragment_module = m_device.createShaderModule(fragment_module_info);
+
+    // define shader stages
+    vk::PipelineShaderStageCreateInfo vertex_shader_stage_info({}, vk::ShaderStageFlagBits::eVertex, vertex_module, "main");
+    vk::PipelineShaderStageCreateInfo fragment_shader_stage_info({}, vk::ShaderStageFlagBits::eFragment, fragment_module, "main");
+    vk::PipelineShaderStageCreateInfo shader_stages[] = { vertex_shader_stage_info, fragment_shader_stage_info };
+
+    // dynamic pipeline state
+    vk::DynamicState dynamic_states[] = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+    vk::PipelineDynamicStateCreateInfo dynamic_state({}, dynamic_states);
+
+    // create vulkan objects for each vertex buffer input binding
+    std::vector<vk::VertexInputBindingDescription> input_bindings(def.vertex_bindings.size());
+    std::vector<vk::VertexInputAttributeDescription> input_attributes;
+
+    for (u32 binding = 0; binding < def.vertex_bindings.size(); binding++) {
+        input_bindings[binding] = vk::VertexInputBindingDescription(binding, def.vertex_bindings[binding].stride);
+
+        for (u32 attr = 0; attr < def.vertex_bindings[binding].attributes.size(); attr++) {
+            auto attribute = def.vertex_bindings[binding].attributes[attr];
+            input_attributes.emplace_back(attr, binding, to_vk_vertex_format(attribute.format), (u32)attribute.offset);
+        }
+    }
+
+    // TODO: For now we hard code vertex data to get something up and running, this should be fleshed out.
+    vk::PipelineVertexInputStateCreateInfo vertex_input_info({}, input_bindings, input_attributes);
+    vk::PipelineInputAssemblyStateCreateInfo input_assembly({}, vk::PrimitiveTopology::eTriangleList, false);
+
+    // viewport and scissor are dynamic state, so we only define the number of viewports & scissors we expect.
+    vk::PipelineViewportStateCreateInfo viewport_state({}, 1, nullptr, 1, nullptr);
+    vk::PipelineRasterizationStateCreateInfo rasterizer({}, false, false,
+                                                        vk::PolygonMode::eFill, vk::CullModeFlagBits::eFront,
+                                                        vk::FrontFace::eCounterClockwise, false,
+                                                        0, 0, 0, 1);
+
+    // TODO: For now we hard code multisampling as we're targeting 2D Pixel art games, might be worth allowing this to be configured
+    vk::PipelineMultisampleStateCreateInfo multisampling({}, vk::SampleCountFlagBits::e1, false);
+
+    // TODO: This should also be configurable. Hard coding for now while.
+    vk::PipelineColorBlendAttachmentState color_blend_attachment;
+    color_blend_attachment.blendEnable          = true;
+    color_blend_attachment.srcColorBlendFactor  = vk::BlendFactor::eSrcAlpha;
+    color_blend_attachment.dstColorBlendFactor  = vk::BlendFactor::eOneMinusSrcAlpha;
+    color_blend_attachment.colorBlendOp         = vk::BlendOp::eAdd;
+    color_blend_attachment.srcColorBlendFactor  = vk::BlendFactor::eOne;
+    color_blend_attachment.dstAlphaBlendFactor  = vk::BlendFactor::eZero;
+    color_blend_attachment.alphaBlendOp         = vk::BlendOp::eAdd;
+    color_blend_attachment.colorWriteMask       = vk::ColorComponentFlagBits::eR |
+                                                  vk::ColorComponentFlagBits::eG |
+                                                  vk::ColorComponentFlagBits::eB |
+                                                  vk::ColorComponentFlagBits::eA;
+
+    vk::PipelineColorBlendStateCreateInfo color_blending({}, false, vk::LogicOp::eCopy, color_blend_attachment);
+
+    // get descriptor set layouts and bind to PipelineLayoutCreateInfo
+    //std::vector<vk::DescriptorSetLayout> layouts(cfg.descriptor_sets.size());
+    //for (u32 i = 0; i < cfg.descriptor_sets.size(); i++) {
+    //	layouts[i] = get_descriptor_set_layout(cfg.descriptor_sets[i])->vk_descriptor_set_layout;
+    //}
+
+    // configure pipeline layout with all descriptor layouts
+    vk::PipelineLayoutCreateInfo layout_info;
+
+    // create pipeline layout
+    auto layout = m_device.createPipelineLayout(layout_info);
+
+    // create graphics pipeline
+    vk::GraphicsPipelineCreateInfo pipeline_info({},
+                                                 shader_stages,
+                                                 &vertex_input_info,
+                                                 &input_assembly,
+                                                 nullptr, // tesselation state
+                                                 &viewport_state,
+                                                 &rasterizer,
+                                                 &multisampling,
+                                                 nullptr, // depth-stencil-state
+                                                 &color_blending,
+                                                 &dynamic_state,
+                                                 layout,
+                                                 m_render_pass,
+                                                 0);
+
+    auto [result, pipeline] = m_device.createGraphicsPipeline({}, pipeline_info);
+
+    // cleanup individual shader modules
+    m_device.destroyShaderModule(vertex_module);
+    m_device.destroyShaderModule(fragment_module);
+
+    if (result == vk::Result::eSuccess) {
+        return m_shaders.emplace(pipeline, layout, m_render_pass);
+    } else {
+        throw std::runtime_error("error creating pipeline object");
+    }
+}
+
+Shader *RenderDevice::get_shader(Handle<Shader> handle) {
+    return (Shader*) m_shaders.get(handle);
+}
+
+void RenderDevice::destroy_shader(Handle<Shader> handle) {
+    auto shader = m_shaders.get(handle);
+
+    // destroy underlying vulkan objects
+    m_device.destroyPipelineLayout(shader->layout);
+    m_device.destroyPipeline(shader->pso);
+
+    // erase the shader from the pool
+    m_shaders.erase(handle);
 }
