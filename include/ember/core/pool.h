@@ -90,6 +90,8 @@ namespace Ember
             };
         };
 
+        // TODO: I hate using a std::vector, we'll need to use something more memory efficient like some form of TLSF
+        // Allocator. For now I just want to get something on the screen though so will improve this later.
         std::vector<Slot> 		m_slots;
         u32 					m_head = 0;
         u32 					m_tail = 0;
