@@ -1,10 +1,12 @@
 #include "core/platform.h"
 #include "core/log.h"
+#include "fmt/format.h"
 #include "system/window.h"
 #include "rhi/vulkan/render_device.h"
 #include "rhi/vulkan/command_buffer.h"
 #include "rhi/vulkan/command_buffer_ring.h"
 #include "rhi/vulkan/shader.h"
+#include "rhi/vulkan/buffer.h"
 #include "rhi/vulkan/vulkan_util.h"
 #include <SDL2/SDL_vulkan.h>
 #include <vector>
@@ -624,4 +626,49 @@ void RenderDevice::destroy_shader(Handle<Shader> handle) {
 
     // erase the shader from the pool
     m_shaders.erase(handle);
+}
+
+Handle<Buffer> RenderDevice::create_buffer(const BufferDef &def) {
+    auto handle = m_buffers.emplace();
+    auto buf = m_buffers.get(handle);
+
+    buf->size = def.size;
+    buf->usage = def.usage;
+    buf->memory_type = def.memory;
+
+    VkBufferCreateInfo buf_info = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    buf_info.usage = to_vk_buffer_usage(def.usage);
+    buf_info.size = def.size;
+
+    VmaAllocationCreateInfo mem_info{};
+    mem_info.usage = to_vk_memory_type(def.memory);
+    mem_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                     VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT |
+                     VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VmaAllocationInfo alloc_info{};
+    VkBuffer temp_buffer{};
+
+    VK_CHECK(vmaCreateBuffer(m_vma, &buf_info, &mem_info, &temp_buffer, &buf->vma_allocation, &alloc_info));
+    buf->device_memory = alloc_info.deviceMemory;
+    buf->data = (u8*)alloc_info.pMappedData;
+    buf->buffer = vk::Buffer(temp_buffer);
+
+    vmaGetAllocationMemoryProperties(m_vma, buf->vma_allocation, &buf->memory_flags);
+
+    if (def.data != nullptr) {
+        memcpy(buf->data, def.data, def.size);
+    }
+
+    return handle;
+}
+
+Buffer* RenderDevice::get_buffer(Handle<Buffer> handle) {
+    return m_buffers.get(handle);
+}
+
+void RenderDevice::destroy_buffer(Handle<Buffer> handle) {
+    auto buf = m_buffers.get(handle);
+    vmaDestroyBuffer(m_vma, buf->buffer, buf->vma_allocation);
+    m_buffers.erase(handle);
 }

@@ -1,15 +1,17 @@
 #pragma once
 
-#include "vulkan/vulkan.h"
+#include "rhi/rhi.h"
+#include "vulkan/vulkan.hpp"
 #include "vk_mem_alloc.h"
+#include <vulkan/vulkan_enums.hpp>
 
 namespace Ember
 {
     struct Buffer
     {
-        VkBuffer                buffer;
-        VkDeviceMemory          device_memory;
-        VkDeviceSize            device_size;
+        vk::Buffer              buffer;
+        vk::DeviceMemory        device_memory;
+        vk::DeviceSize          device_size;
         VkMemoryPropertyFlags   memory_flags;
         VmaAllocation           vma_allocation;
         BufferUsage             usage;

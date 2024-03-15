@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/platform.h"
 #include <vector>
 
 namespace Ember
