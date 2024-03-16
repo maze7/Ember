@@ -573,13 +573,14 @@ Handle<Shader> RenderDevice::create_shader(const ShaderDef &def) {
     vk::PipelineColorBlendStateCreateInfo color_blending({}, false, vk::LogicOp::eCopy, color_blend_attachment);
 
     // get descriptor set layouts and bind to PipelineLayoutCreateInfo
-    //std::vector<vk::DescriptorSetLayout> layouts(cfg.descriptor_sets.size());
-    //for (u32 i = 0; i < cfg.descriptor_sets.size(); i++) {
-    //	layouts[i] = get_descriptor_set_layout(cfg.descriptor_sets[i])->vk_descriptor_set_layout;
-    //}
+    std::vector<vk::DescriptorSetLayout> layouts(def.bind_groups.size());
+    for (u32 i = 0; i < def.bind_groups.size(); i++) {
+        auto binding_layout = m_bind_layouts.get(def.bind_groups[i]);
+    	layouts[i] = binding_layout[i].layout;
+    }
 
     // configure pipeline layout with all descriptor layouts
-    vk::PipelineLayoutCreateInfo layout_info;
+    vk::PipelineLayoutCreateInfo layout_info({}, layouts);
 
     // create pipeline layout
     auto layout = m_device.createPipelineLayout(layout_info);
@@ -672,3 +673,44 @@ void RenderDevice::destroy_buffer(Handle<Buffer> handle) {
     vmaDestroyBuffer(m_vma, buf->buffer, buf->vma_allocation);
     m_buffers.erase(handle);
 }
+
+Handle<BindLayout> RenderDevice::create_bind_layout(const BindLayoutDef& def) {
+    auto handle = m_bind_layouts.emplace();
+    auto layout = m_bind_layouts.get(handle);
+    
+    std::vector<vk::DescriptorSetLayoutBinding> bindings(def.bindings.size());
+    
+    // configure descriptor set bindings
+    u32 index = 0;
+    for (u32 i = 0; i < def.bindings.size(); i++) {
+        bindings[i] = vk::DescriptorSetLayoutBinding(
+            index, 
+            to_vk_binding_type(def.bindings[i].type),
+            def.bindings[i].count,
+            to_vk_shader_stage(def.bindings[i].stage),
+            {} // TODO: We should be able to select this from the abstraction layer, this should probably exist in BindingDef struct.
+        ); 
+
+        index += def.bindings[i].count;
+    }
+
+    // create descriptor set layout
+    vk::DescriptorSetLayoutCreateInfo layout_info({}, bindings);
+    layout->layout = m_device.createDescriptorSetLayout(layout_info);
+
+    return handle;
+}
+
+BindLayout* RenderDevice::get_bind_layout(Handle<BindLayout> handle) {
+    return m_bind_layouts.get(handle);
+}
+
+void RenderDevice::destroy_bind_layout(Handle<BindLayout> handle) {
+    auto layout = m_bind_layouts.get(handle);
+
+    // destroy vulkan layout
+    m_device.destroyDescriptorSetLayout(layout->layout);
+
+    m_bind_layouts.erase(handle);
+}
+
