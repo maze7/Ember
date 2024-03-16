@@ -9,6 +9,7 @@
 #include <set>
 #include <string_view>
 #include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_enums.hpp>
 
 #define VK_CHECK(result) EMBER_ASSERT((result) == VK_SUCCESS)
 
@@ -115,4 +116,15 @@ namespace Ember
 
         return vk_vertex_formats[(u32)value];
     }
+
+    // Utility function to convert an Ember BindingType to a vulkan Descriptor binding type
+    static auto to_vk_binding_type(BindingType value) {
+        static constexpr vk::DescriptorType vk_binding_types[(u32)BindingType::Count] = {
+            vk::DescriptorType::eUniformBuffer,
+            vk::DescriptorType::eUniformBufferDynamic,
+            vk::DescriptorType::eSampler,
+        };
+
+        return vk_binding_types[(u32)value];
+    };
 }

@@ -60,6 +60,7 @@ namespace Ember
         UniformBuffer,
         UniformBufferDynamic,
         Sampler,
+        Count,
     };
 
     // Forward Declarations
@@ -94,11 +95,11 @@ namespace Ember
             std::vector<VertexAttribute> attributes;
         };
 
-        const char* name;
-        std::vector<char>  vertex;
-        std::vector<char>  fragment;
-        std::vector<BindLayout> bind_groups;
-        std::vector<VertexBinding> vertex_bindings;
+        const char*                     name;
+        std::vector<char>               vertex;
+        std::vector<char>               fragment;
+        std::vector<Handle<BindLayout>> bind_groups;
+        std::vector<VertexBinding>      vertex_bindings;
     };
 
     // Definition Struct for a BindGroupLayout (DescriptorSetLayout)
@@ -108,12 +109,10 @@ namespace Ember
         {
             BindingType type;
             ShaderStage stage = ShaderStage::All;
-            u16         start = 0;
             u16         count = 0;
         };
 
-        std::vector<Binding> bindings; // TODO: This probably shouldn't be an STL vector.
-        u32                  index = 0;
+        std::vector<Binding> bindings;
     };  
 
     // Configuration Struct for a DescriptorSet

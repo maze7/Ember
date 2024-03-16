@@ -8,8 +8,6 @@ namespace Ember
     struct BindLayout
     {
         vk::DescriptorSetLayout layout;
-        std::vector<vk::DescriptorSetLayoutBinding> bindings;
-        u16 index;
     };
 
     struct BindGroup
