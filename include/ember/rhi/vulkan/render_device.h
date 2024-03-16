@@ -76,6 +76,7 @@ namespace Ember
         vk::Queue                       m_graphics_queue, m_present_queue;
         vk::DispatchLoaderDynamic       m_dispatch_loader;
         vk::RenderPass                  m_render_pass;
+        vk::DescriptorPool              m_descriptor_pool;
 
         // Swapchain
         vk::SurfaceKHR                  m_surface;

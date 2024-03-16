@@ -30,10 +30,10 @@ namespace Ember
         void clear(f32 red, f32 green, f32 blue, f32 alpha);
 
         void bind_shader(Handle<Shader> handle);
-	    void bind_vertex_buffer(Handle<Buffer> handle, u32 binding, u32 offset);
-		void bind_index_buffer(Handle<Buffer> handle);
+        void bind_vertex_buffer(Handle<Buffer> handle, u32 binding, u32 offset);
+        void bind_index_buffer(Handle<Buffer> handle);
 
-		void draw(u32 first_vertex, u32 vertex_count, u32 first_instance, u32 instance_count);
+        void draw(u32 first_vertex, u32 vertex_count, u32 first_instance, u32 instance_count);
 		void draw_indexed(u32 first_index, u32 index_count, u32 first_instance, u32 instance_count, i32 vertex_offset);
 
     private:
