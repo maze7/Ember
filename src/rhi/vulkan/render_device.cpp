@@ -259,6 +259,27 @@ RenderDevice::RenderDevice(Ember::Window& window) : m_window(window) {
     allocator_info.vulkanApiVersion = VK_API_VERSION_1_3;
     VK_CHECK(vmaCreateAllocator(&allocator_info, &m_vma));
 
+    // create descriptor pools
+    static constexpr u32 k_global_pool_elements = 128;
+    static constexpr u32 k_descriptor_sets_pool_size = 4096;
+
+    vk::DescriptorPoolSize pool_sizes[] = {
+        { vk::DescriptorType::eSampler, k_global_pool_elements },
+        { vk::DescriptorType::eCombinedImageSampler, k_global_pool_elements },
+        { vk::DescriptorType::eSampledImage, k_global_pool_elements },
+        { vk::DescriptorType::eStorageImage, k_global_pool_elements },
+        { vk::DescriptorType::eUniformTexelBuffer, k_global_pool_elements },
+        { vk::DescriptorType::eStorageTexelBuffer, k_global_pool_elements },
+        { vk::DescriptorType::eUniformBuffer, k_global_pool_elements },
+        { vk::DescriptorType::eStorageBuffer, k_global_pool_elements },
+        { vk::DescriptorType::eUniformBufferDynamic, k_global_pool_elements },
+        { vk::DescriptorType::eStorageBufferDynamic, k_global_pool_elements },
+        { vk::DescriptorType::eInputAttachment, k_global_pool_elements },
+    };
+
+    vk::DescriptorPoolCreateInfo pool_info({}, k_descriptor_sets_pool_size, pool_sizes);
+    m_descriptor_pool = m_device.createDescriptorPool(pool_info);
+
     m_initialized = true;
 }
 
@@ -462,6 +483,8 @@ void RenderDevice::wait_idle() {
 
 void RenderDevice::destroy() {
     wait_idle(); // wait until GPU is idle before be start destroying resources
+
+    m_device.destroyDescriptorPool(m_descriptor_pool);
 
     m_cmd_ring->destroy();
     vmaDestroyAllocator(m_vma);
