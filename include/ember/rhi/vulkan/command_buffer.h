@@ -34,7 +34,7 @@ namespace Ember
         void bind_index_buffer(Handle<Buffer> handle);
 
         void draw(u32 first_vertex, u32 vertex_count, u32 first_instance, u32 instance_count);
-		void draw_indexed(u32 first_index, u32 index_count, u32 first_instance, u32 instance_count, i32 vertex_offset);
+        void draw_indexed(u32 first_index, u32 index_count, u32 first_instance, u32 instance_count, i32 vertex_offset);
 
     private:
         friend class RenderDevice;
