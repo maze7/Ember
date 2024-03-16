@@ -15,6 +15,9 @@ Window::Window(const char* title, i32 width, i32 height) {
     window_flags |= SDL_WINDOW_VULKAN;
 #endif
 
+    // configure window hints
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+
     // create the underlying SDL2 window
     m_window = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, window_flags);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/platform.h"
+#include "core/pool.h"
 #include <vector>
 
 namespace Ember
@@ -53,7 +54,21 @@ namespace Ember
         Count,
     };
 
-    // Configuration Struct for a Buffer object
+    // Defines Binding Types
+    enum class BindingType : u32
+    {
+        UniformBuffer,
+        UniformBufferDynamic,
+        Sampler,
+    };
+
+    // Forward Declarations
+    struct Buffer;
+    class Shader;
+    class BindLayout;
+    class BindGroup;
+
+    // Definition Struct for a Buffer object
     struct BufferDef
     {
         BufferUsage usage   = BufferUsage::Vertex;
@@ -62,7 +77,7 @@ namespace Ember
         u64         size    = 0;
     };
 
-    // Configuration Struct for a Shader (PSO)
+    // Definition Struct for a Shader (PSO)
     struct ShaderDef
     {
         // Defines a Vertex Attribute
@@ -82,8 +97,32 @@ namespace Ember
         const char* name;
         std::vector<char>  vertex;
         std::vector<char>  fragment;
+        std::vector<BindLayout> bind_groups;
         std::vector<VertexBinding> vertex_bindings;
-        //std::vector<Handle<DescriptorSet>> descriptor_sets;
+    };
+
+    // Definition Struct for a BindGroupLayout (DescriptorSetLayout)
+    struct BindLayoutDef 
+    {
+        struct Binding        
+        {
+            BindingType type;
+            ShaderStage stage = ShaderStage::All;
+            u16         start = 0;
+            u16         count = 0;
+        };
+
+        std::vector<Binding> bindings; // TODO: This probably shouldn't be an STL vector.
+        u32                  index = 0;
+    };  
+
+    // Configuration Struct for a DescriptorSet
+    struct BindGroupDef 
+    {
+        struct BufferBindingDef { Handle<Buffer> buffer; u64 offset = 0; };
+
+        Handle<BindLayout> layout;
+        std::vector<BufferBindingDef> buffers;
     };
 }
 
