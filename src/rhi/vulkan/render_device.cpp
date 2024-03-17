@@ -264,17 +264,17 @@ RenderDevice::RenderDevice(Ember::Window& window) : m_window(window) {
     static constexpr u32 k_descriptor_sets_pool_size = 4096;
 
     vk::DescriptorPoolSize pool_sizes[] = {
-        { vk::DescriptorType::eSampler, k_global_pool_elements },
-        { vk::DescriptorType::eCombinedImageSampler, k_global_pool_elements },
-        { vk::DescriptorType::eSampledImage, k_global_pool_elements },
-        { vk::DescriptorType::eStorageImage, k_global_pool_elements },
-        { vk::DescriptorType::eUniformTexelBuffer, k_global_pool_elements },
-        { vk::DescriptorType::eStorageTexelBuffer, k_global_pool_elements },
+        //{ vk::DescriptorType::eSampler, k_global_pool_elements },
+        // { vk::DescriptorType::eCombinedImageSampler, k_global_pool_elements },
+        // { vk::DescriptorType::eSampledImage, k_global_pool_elements },
+        // { vk::DescriptorType::eStorageImage, k_global_pool_elements },
+        // { vk::DescriptorType::eUniformTexelBuffer, k_global_pool_elements },
+        // { vk::DescriptorType::eStorageTexelBuffer, k_global_pool_elements },
         { vk::DescriptorType::eUniformBuffer, k_global_pool_elements },
-        { vk::DescriptorType::eStorageBuffer, k_global_pool_elements },
-        { vk::DescriptorType::eUniformBufferDynamic, k_global_pool_elements },
-        { vk::DescriptorType::eStorageBufferDynamic, k_global_pool_elements },
-        { vk::DescriptorType::eInputAttachment, k_global_pool_elements },
+        // { vk::DescriptorType::eStorageBuffer, k_global_pool_elements },
+        // { vk::DescriptorType::eUniformBufferDynamic, k_global_pool_elements },
+        // { vk::DescriptorType::eStorageBufferDynamic, k_global_pool_elements },
+        // { vk::DescriptorType::eInputAttachment, k_global_pool_elements },
     };
 
     vk::DescriptorPoolCreateInfo pool_info({}, k_descriptor_sets_pool_size, pool_sizes);
@@ -737,3 +737,31 @@ void RenderDevice::destroy_bind_layout(Handle<BindLayout> handle) {
     m_bind_layouts.erase(handle);
 }
 
+Handle<BindGroup> RenderDevice::create_bind_group(const BindGroupDef& def) {
+    auto handle = m_bind_groups.emplace();
+    auto group = m_bind_groups.get(handle);
+    auto layout = m_bind_layouts.get(def.layout);
+
+    // allocate a descriptor set
+    vk::DescriptorSetAllocateInfo alloc_info(m_descriptor_pool, layout->layout);
+    group->descriptor_set = m_device.allocateDescriptorSets(alloc_info)[0];
+
+    // build descriptor writes for buffers
+    std::vector<vk::WriteDescriptorSet> writes(def.buffers.size());
+    for (u32 i = 0; i < writes.size(); i++) {
+        writes[i] = vk::WriteDescriptorSet(group->descriptor_set, i, 0, 1);
+
+        auto buf = m_buffers.get(def.buffers[i]);
+        writes[i].descriptorType = vk::DescriptorType::eUniformBuffer;
+        vk::DescriptorBufferInfo buffer_info(buf->buffer, 0, buf->size);
+        writes[i].pBufferInfo = &buffer_info;
+    }
+
+    m_device.updateDescriptorSets(writes, {});
+
+    return handle;
+}
+
+BindGroup* RenderDevice::get_bind_group(Handle<BindGroup> handle) {
+    return m_bind_groups.get(handle);
+}

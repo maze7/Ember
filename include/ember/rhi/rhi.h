@@ -66,8 +66,8 @@ namespace Ember
     // Forward Declarations
     struct Buffer;
     class Shader;
-    class BindLayout;
-    class BindGroup;
+    struct BindLayout;
+    struct BindGroup;
 
     // Definition Struct for a Buffer object
     struct BufferDef
@@ -109,7 +109,7 @@ namespace Ember
         {
             BindingType type;
             ShaderStage stage = ShaderStage::All;
-            u16         count = 0;
+            u16         count = 1;
         };
 
         std::vector<Binding> bindings;
@@ -118,10 +118,8 @@ namespace Ember
     // Configuration Struct for a DescriptorSet
     struct BindGroupDef 
     {
-        struct BufferBindingDef { Handle<Buffer> buffer; u64 offset = 0; };
-
         Handle<BindLayout> layout;
-        std::vector<BufferBindingDef> buffers;
+        std::vector<Handle<Buffer>> buffers;
     };
 }
 

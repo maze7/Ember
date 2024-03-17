@@ -51,6 +51,7 @@ void CommandBuffer::bind_shader(Handle<Shader> handle) {
     EMBER_ASSERT(m_recording);
 
     auto shader = m_gpu->get_shader(handle);
+    m_layout = shader->layout;
     m_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, shader->pso);
 }
 
@@ -66,6 +67,11 @@ void CommandBuffer::bind_index_buffer(Handle<Buffer> handle) {
     
     auto buf = m_gpu->get_buffer(handle);
     m_cmd.bindIndexBuffer(buf->buffer, 0, vk::IndexType::eUint32);
+}
+
+void CommandBuffer::bind_group(Handle<BindGroup> handle) {
+    auto group = m_gpu->get_bind_group(handle);
+    m_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_layout, 0, group->descriptor_set, {});
 }
 
 void CommandBuffer::draw(u32 first_vertex, u32 vertex_count, u32 first_instance, u32 instance_count) {

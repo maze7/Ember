@@ -7,6 +7,7 @@
 namespace Ember
 {
     struct Buffer;
+    struct BindGroup;
     class Shader;
     class RenderDevice;
     class CommandBufferRing;
@@ -32,6 +33,7 @@ namespace Ember
         void bind_shader(Handle<Shader> handle);
         void bind_vertex_buffer(Handle<Buffer> handle, u32 binding, u32 offset);
         void bind_index_buffer(Handle<Buffer> handle);
+        void bind_group(Handle<BindGroup> handle);
 
         void draw(u32 first_vertex, u32 vertex_count, u32 first_instance, u32 instance_count);
         void draw_indexed(u32 first_index, u32 index_count, u32 first_instance, u32 instance_count, i32 vertex_offset);
@@ -44,6 +46,7 @@ namespace Ember
         vk::Framebuffer m_framebuffer;
         vk::RenderPass m_pass;
         vk::ClearValue m_clears[2]; // 0 = color, 1 = depth;
+        vk::PipelineLayout m_layout;
 
         RenderDevice* m_gpu;
         bool m_recording = false;

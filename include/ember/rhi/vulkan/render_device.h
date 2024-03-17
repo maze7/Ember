@@ -45,7 +45,6 @@ namespace Ember
         // BindGroups
         Handle<BindGroup> create_bind_group(const BindGroupDef& def);
         BindGroup* get_bind_group(Handle<BindGroup> handle);
-        void destroy_bind_group(Handle<BindGroup> hanle);
 
         // Create, Access and Destroy Shader (PSO) objects
         Handle<Shader> create_shader(const ShaderDef& def);
