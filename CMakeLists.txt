@@ -68,6 +68,10 @@ add_subdirectory(lib/glm)
 target_include_directories(Ember PUBLIC lib/glm/glm)
 target_link_libraries(Ember PUBLIC glm::glm)
 
+# Ember uses stb_image.h to load images from disk
+target_include_directories(Ember PUBLIC lib/stb)
+target_sources(Ember PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/lib/stb/stb_image.cpp")
+
 # compile definitions for different build configurations
 target_compile_definitions(Ember PUBLIC
     $<$<CONFIG:Debug>:EMBER_DEBUG>
