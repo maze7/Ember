@@ -302,7 +302,7 @@ void RenderDevice::create_swapchain() {
     }
 
     // select the swapchain present mode. Ideally we want VK_PRESENT_MODE_MAILBOX if it's available
-    vk::PresentModeKHR present_mode = vk::PresentModeKHR::eFifo; // eFifo is guaranteed to be available, so it's the default.
+    vk::PresentModeKHR present_mode = vk::PresentModeKHR::eImmediate; // eFifo is guaranteed to be available, so it's the default.
     if (std::ranges::find(present_modes, vk::PresentModeKHR::eMailbox) != present_modes.end()) {
         present_mode = vk::PresentModeKHR::eMailbox;
     }

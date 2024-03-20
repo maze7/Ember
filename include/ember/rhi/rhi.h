@@ -60,17 +60,26 @@ namespace Ember
         UniformBuffer,
         UniformBufferDynamic,
         Sampler,
+        CombinedImageSampler,
         Count,
     };
 
     // Defines the different Image formats
-    enum class ImageFormat : u32
+    enum class TextureFormat : u32
     {
         R,      // Single 8-bit channel,
         RG,     // 2 8-bit channels
         RGB,    // 3 8-bit channels
         RGBA,   // 4 8-bit channels
         Count,  // The total number of supported image formats
+    };
+
+    // Defines the different Texture Types
+    enum class TextureType : u32
+    {
+        Texture1D,
+        Texture2D,
+        Texture3D,
     };
 
     // Defines the Blend operations

@@ -123,6 +123,7 @@ namespace Ember
             vk::DescriptorType::eUniformBuffer,
             vk::DescriptorType::eUniformBufferDynamic,
             vk::DescriptorType::eSampler,
+            vk::DescriptorType::eCombinedImageSampler,
         };
 
         return vk_binding_types[(u32)value];

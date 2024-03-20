@@ -8,7 +8,7 @@ namespace Ember
 {
     struct Buffer;
     struct BindGroup;
-    class Shader;
+    struct Shader;
     class RenderDevice;
     class CommandBufferRing;
 
