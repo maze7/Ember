@@ -63,9 +63,30 @@ namespace Ember
         Count,
     };
 
+    // Defines the different Image formats
+    enum class ImageFormat : u32
+    {
+        R,      // Single 8-bit channel,
+        RG,     // 2 8-bit channels
+        RGB,    // 3 8-bit channels
+        RGBA,   // 4 8-bit channels
+        Count,  // The total number of supported image formats
+    };
+
+    // Defines the Blend operations
+    enum class BlendOp : u32
+    {
+        Add,
+        Subtract,
+        ReverseSubtract,
+        Min,
+        Max,
+        Count,
+    };
+
     // Forward Declarations
+    struct Shader;
     struct Buffer;
-    class Shader;
     struct BindLayout;
     struct BindGroup;
 
@@ -127,6 +148,7 @@ namespace Ember
 #   include "rhi/vulkan/render_device.h"
 #   include "rhi/vulkan/buffer.h"
 #   include "rhi/vulkan/shader.h"
+#   include "rhi/vulkan/texture.h"
 #   include "rhi/vulkan/command_buffer.h"
 #elif EMBER_DX12
     // not implemented yet

@@ -54,6 +54,7 @@ if (EMBER_USE_VULKAN)
             "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/render_device.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/rhi/vulkan/render_device.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/shader.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/texture.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/rhi/vulkan/vulkan_util.h"
     )
 endif()

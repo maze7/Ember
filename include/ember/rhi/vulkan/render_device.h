@@ -28,7 +28,7 @@ namespace Ember
         void destroy();
 
         // Command Buffers
-        void submit(CommandBuffer* cb);
+        void submit(CommandBuffer* cb, bool immediate = false);
         CommandBuffer* get_command_buffer(QueueType type = QueueType::Graphics, bool begin = false);
         CommandBuffer* get_command_buffer_instant();
 
