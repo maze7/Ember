@@ -128,4 +128,38 @@ namespace Ember
 
         return vk_binding_types[(u32)value];
     };
+
+    // Utility function to convert an Ember TextureType to a vulkan ImageType
+    static auto to_vk_image_type(TextureType value) {
+        static constexpr vk::ImageType vk_image_types[(u32)TextureType::Count] = {
+            vk::ImageType::e1D,
+            vk::ImageType::e2D,
+            vk::ImageType::e3D,
+        };
+
+        return vk_image_types[(u32)value];
+    }
+
+    // Utility function to convert an Ember TextureType to a vulkan ImageViewType
+    static auto to_vk_view_type(TextureType value) {
+        static constexpr vk::ImageViewType vk_view_types[(u32)TextureType::Count] = {
+            vk::ImageViewType::e1D,
+            vk::ImageViewType::e2D,
+            vk::ImageViewType::e3D,
+        };
+
+        return vk_view_types[(u32)value];
+    }
+
+    // Utility function to convert an Ember TextureFormat to a vulkan ImageFormat
+    static auto to_vk_image_format(TextureFormat value) {
+        static constexpr vk::Format vk_image_formats[(u32)TextureFormat::Count] = {
+            vk::Format::eR8Srgb,
+            vk::Format::eR8G8Srgb,
+            vk::Format::eR8G8B8Srgb,
+            vk::Format::eR8G8B8A8Srgb,
+        };
+
+        return vk_image_formats[(u32)value];
+    }
 }

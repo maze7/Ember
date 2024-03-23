@@ -9,8 +9,9 @@ namespace Ember
 {
     // forward declarations
     struct Buffer;
+    struct Shader;
+    struct Texture;
     class Window;
-    class Shader;
     class CommandBuffer;
     class CommandBufferRing;
 
@@ -50,6 +51,11 @@ namespace Ember
         Handle<Shader> create_shader(const ShaderDef& def);
         Shader* get_shader(Handle<Shader> handle);
         void destroy_shader(Handle<Shader> handle);
+
+        // Create, Access and Destroy texture objects
+        Handle<Texture> create_texture(const TextureDef& def);
+        Texture* get_texture(Handle<Texture> handle);
+        void destroy_texture(Handle<Texture> handle);
 
         // TODO: This is temporary, RenderPasses will need to be abstracted.
         vk::RenderPass default_render_pass() const { return m_render_pass; }
@@ -98,6 +104,7 @@ namespace Ember
         Pool<Buffer>                    m_buffers;
         Pool<BindLayout>                m_bind_layouts;
         Pool<BindGroup>                 m_bind_groups;
+        Pool<Texture>                   m_textures;
 
 #if defined(EMBER_DEBUG) || defined(EMBER_PROFILE)
         vk::DebugUtilsMessengerEXT      m_debug_messenger;

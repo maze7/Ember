@@ -80,7 +80,17 @@ namespace Ember
         Texture1D,
         Texture2D,
         Texture3D,
+        Count,
     };
+
+    namespace TextureFlags
+    {
+        enum Enum {
+            Default         = 1 << 0,
+            RenderTarget    = 1 << 1,
+            Compute         = 1 << 1,
+        };
+    }
 
     // Defines the Blend operations
     enum class BlendOp : u32
@@ -150,6 +160,18 @@ namespace Ember
     {
         Handle<BindLayout> layout;
         std::vector<Handle<Buffer>> buffers;
+    };
+
+    // Configuration struct for a Texture
+    struct TextureDef
+    {
+        u8*             data = nullptr;
+        u16             width = 1;
+        u16             height = 1;
+        TextureFormat   format = TextureFormat::RGBA;
+        TextureType     type = TextureType::Texture2D;
+        u8              flags = 0; // TextureFlags bitmasks
+        u16             depth = 1;
     };
 }
 
