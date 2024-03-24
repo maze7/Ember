@@ -55,5 +55,12 @@ CommandBuffer* CommandBufferRing::get_command_buffer(u32 frame, bool begin) {
 
 CommandBuffer* CommandBufferRing::get_command_buffer_instant(u32 frame, bool begin) {
     auto cb = &m_command_buffers[frame * k_buffers_per_pool + 1];
+
+    Log::trace("frame: {}, k_buffers_per_pool: {}, cmd: {}", frame, k_buffers_per_pool, frame * k_buffers_per_pool + 1);
+
+    if (begin) {
+        cb->m_cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+    }
+
     return cb;
 }

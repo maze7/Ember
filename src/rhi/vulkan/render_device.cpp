@@ -527,20 +527,15 @@ CommandBuffer *RenderDevice::get_command_buffer_instant() {
 	return cb;
 }
 
-void RenderDevice::submit(CommandBuffer *cb, bool immediate) {
-	auto buf = (CommandBuffer *) cb;
-
+void RenderDevice::submit(CommandBuffer* buf, bool immediate) {
 	// automatically end the command buffer if it wasn't ended
 	if (buf->m_recording)
 		buf->end();
 
 	// if the submission is an immediate submission, we want to flush it to the queue right away
 	if (immediate) {
-		vk::SubmitInfo submit_info;
-		submit_info.commandBufferCount = 1;
-		submit_info.pCommandBuffers = &buf->m_cmd;
-		m_graphics_queue.submit(submit_info);
-		wait_idle(); // wait until command buffer completes before we hand back control to this thread
+		m_graphics_queue.submit(vk::SubmitInfo({}, {}, buf->m_cmd));
+		m_graphics_queue.waitIdle(); // wait until command buffer completes before we hand back control to this thread
 	} else { // otherwise, queue it for the next call to present()
 		m_pending_cmds.push_back(buf);
 	}
@@ -871,7 +866,6 @@ Handle<Texture> RenderDevice::create_texture(const TextureDef &def) {
 
 		// execute command buffer
 		auto cmd = get_command_buffer_instant();
-		cmd->m_cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
 
 		vk::BufferImageCopy region(
 			0,

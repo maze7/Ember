@@ -76,8 +76,8 @@ namespace Ember
     private:
         VmaAllocator                    m_vma;
         Window&                         m_window;
-        u32                             m_frame;
-        u32                              m_swapchain_image;
+        u32                             m_frame = 0;
+        u32                             m_swapchain_image = 0;
         bool                            m_initialized = false;
         bool                            m_resized = false;
 
