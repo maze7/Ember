@@ -162,4 +162,15 @@ namespace Ember
 
         return vk_image_formats[(u32)value];
     }
+
+	// Utility function to convert an Ember Filter to a vulkan Filter
+	static auto to_vk_filter(Filter value) {
+		static constexpr vk::Filter vk_filters[(u32)Filter::Count] = {
+			vk::Filter::eNearest,
+			vk::Filter::eLinear,
+			vk::Filter::eCubicEXT,
+		};
+
+		return vk_filters[(u32)value];
+	}
 }
