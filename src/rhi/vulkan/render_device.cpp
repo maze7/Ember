@@ -830,7 +830,7 @@ Handle<Texture> RenderDevice::create_texture(const TextureDef &def) {
 	const bool is_compute_used = (def.flags & TextureFlags::Compute) == TextureFlags::Compute;
 
 	// apply additional usage flags as needed
-	image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+	image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 	image_info.usage |= is_compute_used ? VK_IMAGE_USAGE_STORAGE_BIT : 0;
 	image_info.usage |= is_render_target ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : 0;
 
@@ -889,7 +889,7 @@ Handle<Texture> RenderDevice::create_texture(const TextureDef &def) {
 		// transition the image to be read by shaders
 		transition_image_layout(cmd->m_cmd, texture->image, texture->format, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-		cmd->end();
+		cmd->m_cmd.end();
 		submit(cmd, true); // immediately submit the command buffer
 
 		// cleanup staging buffer and set image to correct layout after transitions
@@ -907,8 +907,8 @@ Texture *RenderDevice::get_texture(Handle<Texture> handle) {
 void RenderDevice::destroy_texture(Handle<Texture> handle) {
 	auto texture = m_textures.get(handle);
 
+	vmaDestroyImage(m_vma, texture->image, texture->allocation);
 	m_device.destroyImageView(texture->view);
-	m_device.destroyImage(texture->image);
 
 	m_textures.erase(handle);
 }
