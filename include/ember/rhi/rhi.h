@@ -103,6 +103,14 @@ namespace Ember
         Count,
     };
 
+	enum class Filter : u32
+	{
+		Nearest,
+		Linear,
+		Cubic,
+		Count,
+	};
+
     // Forward Declarations
     struct Shader;
     struct Buffer;

@@ -261,12 +261,12 @@ RenderDevice::RenderDevice(Ember::Window &window) : m_window(window) {
 	VK_CHECK(vmaCreateAllocator(&allocator_info, &m_vma));
 
 	// create descriptor pools
-	static constexpr u32 k_global_pool_elements = 128;
+	static constexpr u32 k_global_pool_elements = 1026;
 	static constexpr u32 k_descriptor_sets_pool_size = 4096;
 
 	vk::DescriptorPoolSize pool_sizes[] = {
 		//{ vk::DescriptorType::eSampler, k_global_pool_elements },
-		// { vk::DescriptorType::eCombinedImageSampler, k_global_pool_elements },
+		{ vk::DescriptorType::eCombinedImageSampler, k_global_pool_elements },
 		// { vk::DescriptorType::eSampledImage, k_global_pool_elements },
 		// { vk::DescriptorType::eStorageImage, k_global_pool_elements },
 		// { vk::DescriptorType::eUniformTexelBuffer, k_global_pool_elements },
