@@ -685,12 +685,12 @@ Handle<Buffer> RenderDevice::create_buffer(const BufferDef &def) {
 					 VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
 	VmaAllocationInfo alloc_info{};
-	VkBuffer temp_buffer{};
+	VkBuffer buffer{};
 
-	VK_CHECK(vmaCreateBuffer(m_vma, &buf_info, &mem_info, &temp_buffer, &buf->vma_allocation, &alloc_info));
+	VK_CHECK(vmaCreateBuffer(m_vma, &buf_info, &mem_info, &buffer, &buf->vma_allocation, &alloc_info));
 	buf->device_memory = alloc_info.deviceMemory;
 	buf->data = (u8 *) alloc_info.pMappedData;
-	buf->buffer = vk::Buffer(temp_buffer);
+	buf->buffer = vk::Buffer(buffer);
 
 	vmaGetAllocationMemoryProperties(m_vma, buf->vma_allocation, &buf->memory_flags);
 
