@@ -871,7 +871,6 @@ Handle<Texture> RenderDevice::create_texture(const TextureDef &def) {
 
 		// execute command buffer
 		auto cmd = get_command_buffer_instant();
-		cmd->m_cmd.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
 
 		vk::BufferImageCopy region(
 			0,
@@ -891,6 +890,7 @@ Handle<Texture> RenderDevice::create_texture(const TextureDef &def) {
 
 		cmd->m_cmd.end();
 		submit(cmd, true); // immediately submit the command buffer
+        cmd->reset();
 
 		// cleanup staging buffer and set image to correct layout after transitions
 		destroy_buffer(buf_handle);
