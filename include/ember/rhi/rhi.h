@@ -170,6 +170,13 @@ namespace Ember
         std::vector<Handle<Buffer>> buffers;
     };
 
+	// Configuration struct for a Sampler
+	struct SamplerDef
+	{
+		Filter			min = Filter::Nearest;
+		Filter			mag	= Filter::Nearest;
+	};
+
     // Configuration struct for a Texture
     struct TextureDef
     {

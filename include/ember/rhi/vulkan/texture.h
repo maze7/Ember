@@ -5,6 +5,16 @@
 
 namespace Ember
 {
+	struct Sampler
+	{
+		vk::Sampler 			sampler;
+		vk::Filter				min 		= vk::Filter::eNearest;
+		vk::Filter				mag 		= vk::Filter::eNearest;
+		vk::SamplerAddressMode 	u 			= vk::SamplerAddressMode::eRepeat;
+		vk::SamplerAddressMode 	v 			= vk::SamplerAddressMode::eRepeat;
+		vk::SamplerAddressMode 	w 			= vk::SamplerAddressMode::eRepeat;
+	};
+
     struct Texture
     {
         vk::Image       image;

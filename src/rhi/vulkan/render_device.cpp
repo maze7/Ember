@@ -912,3 +912,30 @@ void RenderDevice::destroy_texture(Handle<Texture> handle) {
 
 	m_textures.erase(handle);
 }
+
+Handle<Sampler> RenderDevice::create_sampler(const SamplerDef &def) {
+	auto handle = m_samplers.emplace();
+	auto sampler = m_samplers.get(handle);
+
+	sampler->min = to_vk_filter(def.min);
+	sampler->mag = to_vk_filter(def.mag);
+
+	vk::SamplerCreateInfo create_info;
+	create_info.minFilter = sampler->min;
+	create_info.magFilter = sampler->mag;
+
+	// create the vulkan sampler
+	sampler->sampler = m_device.createSampler(create_info);
+
+	return handle;
+}
+
+Sampler *RenderDevice::get_sampler(Handle<Sampler> handle) {
+	return m_samplers.get(handle);
+}
+
+void RenderDevice::destroy_sampler(Handle<Sampler> handle) {
+	auto sampler = m_samplers.get(handle);
+	m_device.destroySampler(sampler->sampler);
+	m_samplers.erase(handle);
+}

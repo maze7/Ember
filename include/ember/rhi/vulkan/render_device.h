@@ -11,6 +11,7 @@ namespace Ember
     struct Buffer;
     struct Shader;
     struct Texture;
+	struct Sampler;
     class Window;
     class CommandBuffer;
     class CommandBufferRing;
@@ -56,6 +57,11 @@ namespace Ember
         Handle<Texture> create_texture(const TextureDef& def);
         Texture* get_texture(Handle<Texture> handle);
         void destroy_texture(Handle<Texture> handle);
+
+		// Create, Access and Destroy Sampler objects
+		Handle<Sampler> create_sampler(const SamplerDef& def);
+		Sampler* get_sampler(Handle<Sampler> handle);
+		void destroy_sampler(Handle<Sampler> handle);
 
         // TODO: This is temporary, RenderPasses will need to be abstracted.
         vk::RenderPass default_render_pass() const { return m_render_pass; }
@@ -105,6 +111,7 @@ namespace Ember
         Pool<BindLayout>                m_bind_layouts;
         Pool<BindGroup>                 m_bind_groups;
         Pool<Texture>                   m_textures;
+		Pool<Sampler>					m_samplers;
 
 #if defined(EMBER_DEBUG) || defined(EMBER_PROFILE)
         vk::DebugUtilsMessengerEXT      m_debug_messenger;
