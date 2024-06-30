@@ -57,6 +57,10 @@ add_subdirectory(lib/fmt)
 target_include_directories(Ember PUBLIC lib/fmt/include)
 target_link_libraries(Ember PUBLIC fmt::fmt)
 
+# Ember uses stb_image.h to load images from disk
+target_include_directories(Ember PUBLIC lib/stb)
+target_sources(Ember PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/lib/stb/stb_image.cpp")
+
 # compile definitions for different build configurations
 target_compile_definitions(Ember PUBLIC
     $<$<CONFIG:Debug>:EMBER_DEBUG>
