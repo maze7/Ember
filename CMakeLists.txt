@@ -21,7 +21,7 @@ add_library(
 target_include_directories(
     Ember
     PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/Ember>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/ember>
     PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 )
@@ -56,3 +56,16 @@ endif()
 add_subdirectory(lib/fmt)
 target_include_directories(Ember PUBLIC lib/fmt/include)
 target_link_libraries(Ember PUBLIC fmt::fmt)
+
+# compile definitions for different build configurations
+target_compile_definitions(Ember PUBLIC
+    $<$<CONFIG:Debug>:EMBER_DEBUG>
+    $<$<CONFIG:Profile>:EMBER_PROFILE>
+    $<$<CONFIG:Release>:EMBER_RELEASE>
+)
+
+# If building as a dependency of another project, export the library and include paths to PARENT_SCOPE
+if (NOT PROJECT_IS_TOP_LEVEL)
+    set(EMBER_LIBS Ember PARENT_SCOPE)
+    set(EMBER_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include PARENT_SCOPE)
+endif()
