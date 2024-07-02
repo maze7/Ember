@@ -1,0 +1,27 @@
+#pragma once
+
+#include "core/common.h"
+
+// forward declaration of SDL type
+struct SDL_Window;
+namespace Ember
+{
+	class Window
+	{
+	public:
+		Window(const char* title, i32 width, i32 height);
+		~Window();
+
+		[[nodiscard]] i32 width() const;
+		[[nodiscard]] i32 height() const;
+		[[nodiscard]] SDL_Window* native_handle() const { return m_window; }
+
+		void set_size(i32 width, i32 height);
+		void set_title(const char* title);
+
+		bool poll_events();
+
+	private:
+		SDL_Window* m_window;
+	};
+}

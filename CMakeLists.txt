@@ -10,6 +10,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
 add_library(
     Ember
     STATIC
+    include/ember.h
     include/ember/core/logger.h
     src/core/logger.cpp
     include/ember/core/common.h

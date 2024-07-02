@@ -9,7 +9,7 @@
 #define EMBER_WARN(...)  ember::Logger::warn(__VA_ARGS__)
 #define EMBER_ERROR(...) ember::Logger::error(__VA_ARGS__)
 
-namespace ember
+namespace Ember
 {
 	class Logger
 	{
@@ -44,7 +44,8 @@ namespace ember
 
 	private:
 		// ASCII Encodes a string to be a certain color, utility function used by above log functions
-		static constexpr std::string colored(const char* str, const char* color) {
+		static constexpr std::string colored(const char* str, const char* color)
+		{
 			return std::string("\033[") + color + "m" + str + "\033[m";
 		}
 
