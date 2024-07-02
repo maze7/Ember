@@ -71,3 +71,8 @@ bool Window::poll_events()
 
 	return true;
 }
+
+const char *Window::title() const
+{
+	return SDL_GetWindowTitle(m_window);
+}

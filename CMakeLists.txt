@@ -17,6 +17,7 @@ add_library(
     include/ember/platform/window.h
     src/platform/window.cpp
     include/ember/core/pool.h
+    include/ember/graphics/graphics.h
 )
 
 # configure include directories
@@ -51,6 +52,8 @@ if (EMBER_USE_VULKAN)
         PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/platform/vulkan/vma.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/vulkan/vma.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/platform/vulkan/render_device.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/vulkan/render_device.cpp"
     )
 endif()
 
