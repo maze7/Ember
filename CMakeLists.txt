@@ -16,6 +16,7 @@ add_library(
     include/ember/core/common.h
     include/ember/platform/window.h
     src/platform/window.cpp
+    include/ember/core/pool.h
 )
 
 # configure include directories

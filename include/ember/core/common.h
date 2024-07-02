@@ -23,9 +23,10 @@
 #define EMBER_MAKESTR(L)							EMBER_STR(L)
 
 #if !defined(NDEBUG) || defined(EMBER_PROFILE)
-#	define EMBER_ASSERT(condition) 	                if (!(condition)) { 											   		  \
-									                	Ember::Log::error(__FILE__"(" EMBER_MAKESTR(__LINE__) "): ASSERT");   \
-									                	EMBER_DEBUG_BREAK();                        				   		  \
+#	define EMBER_ASSERT(condition) 	                if (!(condition)) 															 \
+													{ 											   		  	 					 \
+									                	Ember::Logger::error(__FILE__"(" EMBER_MAKESTR(__LINE__) "): ASSERT");   \
+									                	EMBER_DEBUG_BREAK();                        				   		  	 \
 									                }
 #else
 # 	define EMBER_ASSERT(condition)			        (condition) // asserts are stripped for release builds
