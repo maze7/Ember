@@ -4,43 +4,48 @@
 #include <iostream>
 #include <mutex>
 
+#define EMBER_LOG(...) ember::Logger::log(__VA_ARGS__)
+#define EMBER_INFO(...)  ember::Logger::info(__VA_ARGS__)
+#define EMBER_WARN(...)  ember::Logger::warn(__VA_ARGS__)
+#define EMBER_ERROR(...) ember::Logger::error(__VA_ARGS__)
+
 namespace ember
 {
-	class Log
+	class Logger
 	{
 	public:
 		// Log a trace-level message
 		template <typename ...Args>
-		static void trace(fmt::format_string<Args...> fmt, Args&&... args)
+		static void log(fmt::format_string<Args...> fmt, Args&&... args)
 		{
-			log("trace", "36", std::forward(fmt), std::forward<Args>(args)...) << std::endl;
+			log("log", "36", fmt, std::forward<Args>(args)...);
 		}
 
 		// Log an info-level message
 		template <typename ...Args>
 		static void info(fmt::format_string<Args...> fmt, Args&&... args)
 		{
-			log("info", "32", std::forward(fmt), std::forward<Args>(args)...) << std::endl;
+			log("info", "32", fmt, std::forward<Args>(args)...);
 		}
 
 		// Log a warning-level message
 		template <typename ...Args>
 		static void warn(fmt::format_string<Args...> fmt, Args&&... args)
 		{
-			log("warn", "33", std::forward(fmt), std::forward<Args>(args)...) << std::endl;
+			log("warn", "33", fmt, std::forward<Args>(args)...);
 		}
 
 		// Log an error-level message
 		template <typename ...Args>
 		static void error(fmt::format_string<Args...> fmt, Args&&... args)
 		{
-			log("error", "31", std::forward(fmt), std::forward<Args>(args)...) << std::endl;
+			log("error", "31", fmt, std::forward<Args>(args)...);
 		}
 
 	private:
 		// ASCII Encodes a string to be a certain color, utility function used by above log functions
-		static constexpr const char* colored(const char* str, const char* color) {
-			return (std::string("\033[") + color + "m" + str + "\033[m").c_str();
+		static constexpr std::string colored(const char* str, const char* color) {
+			return std::string("\033[") + color + "m" + str + "\033[m";
 		}
 
 		// Generic log builder, handles label, color and formatting of a single log line.
