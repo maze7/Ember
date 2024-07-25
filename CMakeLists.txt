@@ -52,8 +52,15 @@ if (EMBER_USE_VULKAN)
         PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/platform/vulkan/vma.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/vulkan/vma.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/platform/vulkan/util.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/platform/vulkan/render_device.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/vulkan/render_device.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/platform/vulkan/buffer.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/vulkan/buffer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/platform/vulkan/command_buffer.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/vulkan/command_buffer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/ember/platform/vulkan/command_buffer_ring.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/vulkan/command_buffer_ring.cpp"
     )
 endif()
 

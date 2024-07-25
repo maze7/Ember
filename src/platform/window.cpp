@@ -3,8 +3,7 @@
 
 using namespace Ember;
 
-Window::Window(const char* title, i32 width, i32 height)
-{
+Window::Window(const char *title, i32 width, i32 height) {
 	// If SDL hasn't been initialised, initialise it now before creating a window
 	if (!SDL_WasInit(SDL_INIT_EVERYTHING))
 		SDL_Init(SDL_INIT_EVERYTHING);
@@ -12,9 +11,9 @@ Window::Window(const char* title, i32 width, i32 height)
 	u32 flags = SDL_WINDOW_RESIZABLE;
 
 	// platform specific window flags
-	#ifdef EMBER_VULKAN
-		flags |= SDL_WINDOW_VULKAN;
-	#endif
+#ifdef EMBER_VULKAN
+	flags |= SDL_WINDOW_VULKAN;
+#endif
 
 	// configure window hints
 	SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
@@ -23,8 +22,7 @@ Window::Window(const char* title, i32 width, i32 height)
 	m_window = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, flags);
 }
 
-Window::~Window()
-{
+Window::~Window() {
 	if (m_window)
 		SDL_DestroyWindow(m_window);
 
@@ -34,37 +32,31 @@ Window::~Window()
 		SDL_Quit();
 }
 
-i32 Window::width() const
-{
+i32 Window::width() const {
 	int width, height;
 	SDL_GetWindowSize(m_window, &width, &height);
 
 	return width;
 }
 
-i32 Window::height() const
-{
+i32 Window::height() const {
 	int width, height;
 	SDL_GetWindowSize(m_window, &width, &height);
 
 	return height;
 }
 
-void Window::set_size(i32 width, i32 height)
-{
+void Window::set_size(i32 width, i32 height) {
 	SDL_SetWindowSize(m_window, width, height);
 }
 
-void Window::set_title(const char *title)
-{
+void Window::set_title(const char *title) {
 	SDL_SetWindowTitle(m_window, title);
 }
 
-bool Window::poll_events()
-{
+bool Window::poll_events() {
 	SDL_Event event;
-	while (SDL_PollEvent(&event) != 0)
-	{
+	while (SDL_PollEvent(&event) != 0) {
 		if (event.type == SDL_QUIT)
 			return false;
 	}
@@ -72,7 +64,6 @@ bool Window::poll_events()
 	return true;
 }
 
-const char *Window::title() const
-{
+const char *Window::title() const {
 	return SDL_GetWindowTitle(m_window);
 }

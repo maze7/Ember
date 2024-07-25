@@ -25,7 +25,7 @@
 #if !defined(NDEBUG) || defined(EMBER_PROFILE)
 #	define EMBER_ASSERT(condition) 	                if (!(condition)) 															 \
 													{ 											   		  	 					 \
-									                	Ember::Logger::error(__FILE__"(" EMBER_MAKESTR(__LINE__) "): ASSERT");   \
+									                	Ember::Log::error(__FILE__"(" EMBER_MAKESTR(__LINE__) "): ASSERT");   \
 									                	EMBER_DEBUG_BREAK();                        				   		  	 \
 									                }
 #else
