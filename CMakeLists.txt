@@ -17,6 +17,22 @@ add_library(
     include/ember/core/common.h
     include/ember/core/logger.h
     src/core/logger.cpp
+    include/ember/platform/window.h
+    src/platform/window.cpp
+    include/ember/input/axes.h
+    include/ember/input/buttons.h
+    include/ember/input/keys.h
+    include/ember/input/mouse_buttons.h
+    include/ember/input/keyboard.h
+    include/ember/input/mouse.h
+    include/ember/input/gamepad.h
+    include/ember/input/input.h
+    src/input/input.cpp
+    src/input/keyboard.cpp
+    include/ember/core/time.h
+    src/core/time.cpp
+    include/ember/math/vector2.h
+    src/input/mouse.cpp
 )
 
 # add include directories to Ember library
@@ -37,7 +53,7 @@ endif()
 # Ember uses fmt as a replacement for std::format while compiler support is still spotty.
 add_subdirectory(lib/fmt)
 target_include_directories(Ember PUBLIC lib/fmt/include)
-target_link_directories(Ember PUBLIC fmt::fmt)
+target_link_libraries(Ember PUBLIC fmt::fmt)
 
 # Ember uses stb_image.h to load images from disk
 target_include_directories(Ember PUBLIC lib/stb)
@@ -52,6 +68,6 @@ target_compile_definitions(Ember PUBLIC
 
 # If building as a dependency of another project, export the library and include paths to PARENT_SCOPE
 if (NOT PROJECT_IS_TOP_LEVEL)
-    set(EMBER_LIBS Ember PARENT_SCOPE)
+    set(EMBER_LIB Ember PARENT_SCOPE)
     set(EMBER_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include PARENT_SCOPE)
 endif()
