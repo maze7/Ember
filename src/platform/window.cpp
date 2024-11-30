@@ -245,12 +245,13 @@ bool Window::poll_events(InputState& state) {
 			}
 			case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
 				u32 id = event.gaxis.which;
+				float value = event.gaxis.value >= 0
+					? (float) event.gaxis.value / 32767.0f
+					: (float) event.gaxis.value / 32768.0f;
 
 				// find Controller and forward event
 				if (auto controller = state.controller(id))
-					controller->on_axis((Axis)event.gaxis.axis, event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION);
-
-				break;
+					controller->on_axis((Axis)event.gaxis.axis, value);
 			}
 			default:
 				break;

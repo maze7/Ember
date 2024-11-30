@@ -32,7 +32,7 @@ bool Controller::released(Button button) const {
 	return m_released[index];
 }
 
-bool Controller::axis(Axis axis) const {
+float Controller::axis(Axis axis) const {
 	u32 index = (u32) axis;
 
 	EMBER_ASSERT(index < MAX_AXES);

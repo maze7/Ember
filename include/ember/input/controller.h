@@ -59,7 +59,7 @@ namespace Ember
 		 * @param axis Gamepad or Joystick axis that is being checked
 		 * @return float value of the given axis.
 		 */
-		[[nodiscard]] bool axis(Axis axis) const;
+		[[nodiscard]] float axis(Axis axis) const;
 
 		/**
 		 * Rumbles the controller for a given duration. This will cancel any previous rumble effects.
