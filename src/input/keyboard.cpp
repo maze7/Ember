@@ -43,7 +43,6 @@ void Keyboard::on_key(Key key, bool down) {
 }
 
 void Keyboard::reset() {
-	std::ranges::fill(m_down, false);
 	std::ranges::fill(m_pressed, false);
 	std::ranges::fill(m_released, false);
 	std::ranges::fill(m_timestamp, 0);

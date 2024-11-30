@@ -7,8 +7,11 @@ namespace Ember
 	{
 		T x, y;
 
-		Vector2() = default;
-		Vector2(T a, T b) : x(a), y(b) {}
+		static constexpr Vector2<T> zero = Vector2<T>(0, 0);
+		static constexpr Vector2<T> one = Vector2<T>(1, 0);
+
+		constexpr Vector2() = default;
+		constexpr Vector2(T a, T b) : x(a), y(b) {}
 
 		T& operator[](int i) { return ((&x)[i]); }
 		const T& operator[](int i) const { return ((&x)[i]); }

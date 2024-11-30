@@ -25,7 +25,7 @@ add_library(
     include/ember/input/mouse_buttons.h
     include/ember/input/keyboard.h
     include/ember/input/mouse.h
-    include/ember/input/gamepad.h
+    include/ember/input/controller.h
     include/ember/input/input.h
     src/input/input.cpp
     src/input/keyboard.cpp
@@ -33,6 +33,14 @@ add_library(
     src/core/time.cpp
     include/ember/math/vector2.h
     src/input/mouse.cpp
+    src/input/controller.cpp
+    include/ember/input/virtual_axis.h
+    include/ember/input/virtual_button.h
+    include/ember/input/virtual_stick.h
+    src/input/virtual_axis.cpp
+    src/input/virtual_button.cpp
+    src/input/virtual_stick.cpp
+    include/ember/math/math.h
 )
 
 # add include directories to Ember library
