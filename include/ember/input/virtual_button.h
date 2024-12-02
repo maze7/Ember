@@ -82,11 +82,33 @@ namespace Ember
 			MouseButton m_button;
 		};
 
-		VirtualButton(const std::string& name, float buffer = 0);
+		VirtualButton& add(Key key);
 
+		VirtualButton& add(MouseButton button);
 
+		template <typename T, typename T2, typename... Args>
+		VirtualButton& add(T first, T2 second, const Args&... args) {
+			add(first);
+			add(second, args...);
+			return *this;
+		}
+
+		[[nodiscard]] bool down() const;
+		[[nodiscard]] bool pressed() const;
+		[[nodiscard]] bool released() const;
+		[[nodiscard]] float value() const;
+		[[nodiscard]] float raw_value() const;
 
 	private:
+		friend class Input;
 
+		void update();
+
+		std::vector<std::unique_ptr<Binding>> m_bindings;
+		bool m_down = false;
+		bool m_pressed = false;
+		bool m_released = false;
+		float m_value = 0;
+		float m_raw_value = 0;
 	};
 }

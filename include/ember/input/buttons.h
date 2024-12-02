@@ -7,6 +7,7 @@ namespace Ember
 	// Controller Buttons
 	enum class Button : i32
 	{
+		None = -1,
 		A = 0,
 		B = 1,
 		X = 2,
