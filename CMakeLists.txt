@@ -76,6 +76,6 @@ target_compile_definitions(Ember PUBLIC
 
 # If building as a dependency of another project, export the library and include paths to PARENT_SCOPE
 if (NOT PROJECT_IS_TOP_LEVEL)
-    set(EMBER_LIB Ember PARENT_SCOPE)
+    set(EMBER_LIBS Ember PARENT_SCOPE)
     set(EMBER_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include PARENT_SCOPE)
 endif()
