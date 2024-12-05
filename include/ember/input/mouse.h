@@ -17,7 +17,7 @@ namespace Ember
 		[[nodiscard]] Vector2f wheel() const { return m_wheel; }
 
 		[[nodiscard]] bool down(MouseButton button) const;
-		[[nodsicard]] bool pressed(MouseButton button) const;
+		[[nodiscard]] bool pressed(MouseButton button) const;
 		[[nodiscard]] bool released(MouseButton button) const;
 
 	private:

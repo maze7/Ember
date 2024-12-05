@@ -41,6 +41,14 @@ add_library(
     src/input/virtual_button.cpp
     src/input/virtual_stick.cpp
     include/ember/math/math.h
+    include/ember/graphics/texture.h
+    include/ember/graphics/shader.h
+    include/ember/core/pool.h
+    include/ember/core/handle.h
+    include/ember/graphics/render_device.h
+    include/ember/graphics/sdl/sdl_render_device.h
+    src/graphics/sdl/sdl_render_device.cpp
+    include/ember/graphics/graphics.h
 )
 
 # add include directories to Ember library
