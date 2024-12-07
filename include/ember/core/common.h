@@ -66,3 +66,5 @@ namespace Ember
 		return std::make_unique<T>(std::forward<Args>(args)...);
 	}
 }
+
+using Exception = std::runtime_error;
