@@ -9,5 +9,7 @@ namespace Ember
 	{
 		u32 slot;
 		u32 gen;
+
+		inline static Handle<T> null = { .slot = 0, .gen = 0 };
 	};
 }

@@ -3,6 +3,22 @@
 
 using namespace Ember;
 
+namespace
+{
+	SDL_GPUTextureFormat to_sdl_gpu_texture_format(TextureFormat format) {
+		switch (format) {
+			case TextureFormat::R8G8B8A8:
+				return SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+			case TextureFormat::R8:
+				return SDL_GPU_TEXTUREFORMAT_R8_UNORM;
+			case TextureFormat::Depth24Stencil8:
+				return SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT;
+			default:
+				throw Exception("Unknown texture format");
+		}
+	}
+}
+
 void RenderDeviceSDL::init(Window* window) {
 	EMBER_ASSERT(!m_initialized);
 
@@ -61,5 +77,33 @@ void RenderDeviceSDL::destroy_shader(ShaderHandle handle) {
 		SDL_ReleaseGPUShader(m_gpu, shader->vertex);
 		SDL_ReleaseGPUShader(m_gpu, shader->fragment);
 		m_shaders.erase(handle);
+	}
+}
+
+TextureHandle RenderDeviceSDL::create_texture(u32 width, u32 height, TextureFormat format) {
+	EMBER_ASSERT(m_initialized);
+
+	auto sdl_format = to_sdl_gpu_texture_format(format);
+
+	SDL_GPUTextureCreateInfo texture_create_info = {
+		.type = SDL_GPU_TEXTURETYPE_2D,
+		.format = sdl_format,
+		.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
+		.width = width,
+		.height = height,
+		.layer_count_or_depth = 1,
+		.num_levels = 1,
+		.sample_count = SDL_GPU_SAMPLECOUNT_1
+	};
+
+	// create texture resource and add to texture pool
+	auto texture = SDL_CreateGPUTexture(m_gpu, &texture_create_info);
+	return m_textures.emplace(texture, sdl_format, width, height);
+}
+
+void RenderDeviceSDL::destroy_texture(TextureHandle handle) {
+	if (auto texture = m_textures.get(handle)) {
+		Log::trace("Destroying texture: [slot: {}, gen: {}]", handle.slot, handle.gen);
+		SDL_ReleaseGPUTexture(m_gpu, texture->texture);
 	}
 }
