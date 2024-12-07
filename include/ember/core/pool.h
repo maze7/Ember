@@ -40,22 +40,28 @@ namespace Ember
 		void erase(Handle<HandleType> handle) {
 			EMBER_ASSERT(handle.gen == m_slots[handle.slot].gen);
 
-			m_slots[handle.slot].data.reset();
-			m_slots[handle.slot].gen++;
-			m_slots[handle.slot].active = false;
-
-			m_slots[handle.slot].next = m_slots[0].next;
-			m_slots[0].next = handle.slot;
+			// only erase the slot if the handle is correct
+			if (handle.gen == m_slots[handle.slot].gen) {
+				m_slots[handle.slot].data.reset();
+				m_slots[handle.slot].gen++;
+				m_slots[handle.slot].active = false;
+				m_slots[handle.slot].next = m_slots[0].next;
+				m_slots[0].next = handle.slot;
+			}
 		}
 
 		T *get(Handle<HandleType> handle) {
-			EMBER_ASSERT(handle.gen == m_slots[handle.slot].gen);
-			return &(m_slots[handle.slot].data.value());
+			if (handle.gen == m_slots[handle.slot].gen)
+				return &(m_slots[handle.slot].data.value());
+			else
+				return nullptr;
 		}
 
 		const T *get(Handle<HandleType> handle) const {
-			EMBER_ASSERT(handle.gen == m_slots[handle.slot].gen);
-			return &(m_slots[handle.slot].data.value());
+			if (handle.gen == m_slots[handle.slot].gen)
+				return &(m_slots[handle.slot].data.value());
+			else
+				return nullptr;
 		}
 
 		// Custom iterator classes

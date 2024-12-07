@@ -7,7 +7,7 @@
 
 namespace Ember
 {
-	struct ShaderResourceSDL : public ShaderResource
+	struct ShaderResourceSDL : ShaderResource
 	{
 		ShaderResourceSDL(SDL_GPUShader* v, SDL_GPUShader* f) : vertex(v), fragment(f) {}
 
@@ -23,15 +23,12 @@ namespace Ember
 
 		void init(Window *window) override;
 		void destroy() override;
+		void* native_handle() override { return m_gpu; }
 
 		ShaderHandle create_shader(const ShaderDef &def) override;
 		void destroy_shader(ShaderHandle handle) override;
 
-		operator SDL_GPUDevice* () { return m_gpu; }
-
 	private:
-		ShaderResourceSDL get_shader(ShaderHandle handle);
-		
 		bool					m_initialized = false;
 		Window*					m_window = nullptr;
 		SDL_GPUDevice*			m_gpu = nullptr;

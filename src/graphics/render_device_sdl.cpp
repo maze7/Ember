@@ -56,12 +56,10 @@ ShaderHandle RenderDeviceSDL::create_shader(const ShaderDef& def) {
 }
 
 void RenderDeviceSDL::destroy_shader(ShaderHandle handle) {
-	EMBER_ASSERT(m_initialized);
-
-	Log::trace("Destroying shader: {},{}", handle.gen, handle.slot);
-
 	if (auto shader = m_shaders.get(handle)) {
+		Log::trace("Destroying shader: [slot: {}, gen: {}]", handle.slot, handle.gen);
 		SDL_ReleaseGPUShader(m_gpu, shader->vertex);
 		SDL_ReleaseGPUShader(m_gpu, shader->fragment);
+		m_shaders.erase(handle);
 	}
 }

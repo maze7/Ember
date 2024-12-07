@@ -48,6 +48,8 @@ add_library(
     include/ember/graphics/render_device_sdl.h
     src/graphics/render_device_sdl.cpp
         include/ember/graphics/shader.h
+        src/graphics/shader.cpp
+        src/graphics/render_device.cpp
 )
 
 # add include directories to Ember library

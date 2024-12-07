@@ -1,6 +1,8 @@
 #pragma once
 
 #include <vector>
+
+#include "render_device.h"
 #include "core/common.h"
 
 namespace Ember
@@ -9,5 +11,15 @@ namespace Ember
 	{
 		std::vector<u8> vertex;
 		std::vector<u8> fragment;
+	};
+
+	class Shader
+	{
+	public:
+		explicit Shader(const ShaderDef& def);
+		~Shader();
+
+	private:
+		ShaderHandle m_resource;
 	};
 }
