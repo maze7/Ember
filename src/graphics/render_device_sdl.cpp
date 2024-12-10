@@ -80,12 +80,12 @@ void RenderDeviceSDL::destroy_shader(ShaderHandle handle) {
 	}
 }
 
-TextureHandle RenderDeviceSDL::create_texture(u32 width, u32 height, TextureFormat format) {
+TextureHandle RenderDeviceSDL::create_texture(u32 width, u32 height, TextureFormat format, Target* target) {
 	EMBER_ASSERT(m_initialized);
 
 	auto sdl_format = to_sdl_gpu_texture_format(format);
 
-	SDL_GPUTextureCreateInfo texture_create_info = {
+	SDL_GPUTextureCreateInfo info = {
 		.type = SDL_GPU_TEXTURETYPE_2D,
 		.format = sdl_format,
 		.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
@@ -96,8 +96,15 @@ TextureHandle RenderDeviceSDL::create_texture(u32 width, u32 height, TextureForm
 		.sample_count = SDL_GPU_SAMPLECOUNT_1
 	};
 
+	if (target) {
+		if (format == TextureFormat::Depth24Stencil8)
+			info.usage |= SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+		else
+			info.usage |= SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+	}
+
 	// create texture resource and add to texture pool
-	auto texture = SDL_CreateGPUTexture(m_gpu, &texture_create_info);
+	auto texture = SDL_CreateGPUTexture(m_gpu, &info);
 	return m_textures.emplace(texture, sdl_format, width, height);
 }
 

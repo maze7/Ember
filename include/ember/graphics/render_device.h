@@ -30,8 +30,6 @@ namespace Ember
 		// texture resources
 		virtual TextureHandle create_texture(u32 width, u32 height, TextureFormat format) = 0;
 		virtual void destroy_texture(TextureHandle handle) = 0;
-
-
 	};
 
 	extern RenderDevice* render_device;

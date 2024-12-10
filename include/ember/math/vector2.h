@@ -10,7 +10,7 @@ namespace Ember
 		static constexpr Vector2<T> zero = Vector2<T>(0, 0);
 		static constexpr Vector2<T> one = Vector2<T>(1, 0);
 
-		constexpr Vector2() = default;
+		constexpr Vector2() : x(0), y(0) {};
 		constexpr Vector2(T a, T b) : x(a), y(b) {}
 
 		T& operator[](int i) { return ((&x)[i]); }

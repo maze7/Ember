@@ -51,6 +51,10 @@ add_library(
         src/graphics/shader.cpp
         src/graphics/render_device.cpp
         include/ember/graphics/texture_format.h
+        src/graphics/texture.cpp
+        include/ember/graphics/target.h
+        include/ember/math/rect.h
+        src/graphics/target.cpp
 )
 
 # add include directories to Ember library
