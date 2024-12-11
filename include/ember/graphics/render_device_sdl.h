@@ -4,6 +4,8 @@
 
 #include "graphics/render_device.h"
 #include "graphics/texture_format.h"
+#include "graphics/target.h"
+#include "graphics/color.h"
 #include "core/pool.h"
 
 namespace Ember
@@ -27,11 +29,6 @@ namespace Ember
 		u32 height;
 	};
 
-	struct TargetResourceSDL : TargetResource
-	{
-		std::vector<Handle<TextureResource>> attachments;
-	};
-
 	class RenderDeviceSDL final : public RenderDevice
 	{
 	public:
@@ -52,12 +49,40 @@ namespace Ember
 		void destroy_target(Handle<TargetResource> handle) override;
 
 	private:
+		struct ClearInfo
+		{
+			Color color;
+			float depth;
+			int stencil;
+		};
+
+		void reset_command_buffers();
+		void flush_commands();
+		void begin_copy_pass();
+		void end_copy_pass();
+		void begin_render_pass(ClearInfo clear, Target* target = nullptr);
+		void end_render_pass();
+
 		bool					m_initialized = false;
 		Window*					m_window = nullptr;
 		SDL_GPUDevice*			m_gpu = nullptr;
 
 		Pool<ShaderResourceSDL, ShaderResource>		m_shaders;
 		Pool<TextureResourceSDL, TextureResource>	m_textures;
-		Pool<TargetResourceSDL, TargetResource>		m_targets;
+		Pool<TargetResource>						m_targets;
+
+		Handle<TextureResource>	m_default_texture{};
+		std::unique_ptr<Target>	m_framebuffer{};
+		SDL_GPUTransferBuffer*  m_texture_transfer_buffer = nullptr;
+		SDL_GPUTransferBuffer*  m_buffer_transfer_buffer = nullptr;
+		SDL_GPUCommandBuffer*   m_cmd_render = nullptr;
+		SDL_GPUCommandBuffer*	m_cmd_transfer = nullptr;
+		SDL_GPUCopyPass*		m_copy_pass = nullptr;
+		SDL_GPURenderPass*		m_render_pass = nullptr;
+
+		u32 m_texture_transfer_buffer_offset = 0;
+		u32 m_texture_transfer_buffer_cycle_count = 0;
+		u32 m_buffer_transfer_buffer_offset = 0;
+		u32 m_buffer_transfer_buffer_cycle_count = 0;
 	};
 }

@@ -11,8 +11,10 @@ namespace Ember
 	{
 	public:
 
-		Texture(u32 width, u32 height, TextureFormat format = TextureFormat::Color);
+		Texture(u32 width, u32 height, TextureFormat format = TextureFormat::Color, Target* target = nullptr);
 		~Texture();
+
+		Handle<TextureResource> handle() const { return m_resource; }
 
 	private:
 		bool m_is_target_attachment = false;

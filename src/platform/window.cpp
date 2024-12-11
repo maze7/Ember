@@ -34,17 +34,18 @@ Window::~Window() {
 }
 
 i32 Window::width() const {
-	int width, height;
-	SDL_GetWindowSize(m_window, &width, &height);
-
-	return width;
+	return size().x;
 }
 
 i32 Window::height() const {
-	int width, height;
-	SDL_GetWindowSize(m_window, &width, &height);
+	return size().y;
+}
 
-	return height;
+Vector2i Window::size() const {
+	Vector2i size;
+	SDL_GetWindowSize(m_window, &size.x, &size.y);
+
+	return size;
 }
 
 float Window::aspect_ratio() const {

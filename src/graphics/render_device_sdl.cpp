@@ -13,6 +13,8 @@ namespace
 				return SDL_GPU_TEXTUREFORMAT_R8_UNORM;
 			case TextureFormat::Depth24Stencil8:
 				return SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT;
+			case TextureFormat::Color:
+				return SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 			default:
 				throw Exception("Unknown texture format");
 		}
@@ -26,24 +28,100 @@ void RenderDeviceSDL::init(Window* window) {
 	m_gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, nullptr);
 	SDL_ClaimWindowForGPUDevice(m_gpu, m_window->native_handle());
 
+	// init command buffers
+	reset_command_buffers();
+
+	// create transfer buffers (textures & buffer)
+	SDL_GPUTransferBufferCreateInfo info = {
+		.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+		.size = 16 * 1024 * 1024, // 16mb
+		.props = 0,
+	};
+	m_texture_transfer_buffer = SDL_CreateGPUTransferBuffer(m_gpu, &info);
+	m_buffer_transfer_buffer = SDL_CreateGPUTransferBuffer(m_gpu, &info);
 	m_initialized = true;
+
+	// create default texture
+	m_default_texture = create_texture(1, 1, TextureFormat::R8G8B8A8, nullptr);
+	// upload default white texture data
+
+	// create framebuffer
+	auto window_size = window->size();
+	m_framebuffer = std::make_unique<Target>((u32)window_size.x, (u32)window_size.y);
+
 }
 
 void RenderDeviceSDL::destroy() {
 	EMBER_ASSERT(m_initialized);
 	SDL_WaitForGPUIdle(m_gpu);
 
+	m_framebuffer.reset();
+
+	for (auto target : m_targets)
+		destroy_target(target);
+
 	for (auto shader : m_shaders)
 		destroy_shader(shader);
 
+	for (auto texture : m_textures)
+		destroy_texture(texture);
+
+	// destroy transfer buffers
+	SDL_ReleaseGPUTransferBuffer(m_gpu, m_texture_transfer_buffer);
+	SDL_ReleaseGPUTransferBuffer(m_gpu, m_buffer_transfer_buffer);
+
 	SDL_ReleaseWindowFromGPUDevice(m_gpu, m_window->native_handle());
 	SDL_DestroyGPUDevice(m_gpu);
+
 	m_initialized = false;
 }
 
 RenderDeviceSDL::~RenderDeviceSDL() {
 	if (m_initialized)
 		destroy();
+}
+
+void RenderDeviceSDL::reset_command_buffers() {
+	EMBER_ASSERT(m_cmd_render == nullptr && m_cmd_transfer == nullptr);
+
+	m_cmd_render = SDL_AcquireGPUCommandBuffer(m_gpu);
+	m_cmd_transfer = SDL_AcquireGPUCommandBuffer(m_gpu);
+
+	m_texture_transfer_buffer_offset = 0;
+	m_texture_transfer_buffer_cycle_count = 0;
+	m_buffer_transfer_buffer_offset = 0;
+	m_buffer_transfer_buffer_offset = 0;
+}
+
+void RenderDeviceSDL::flush_commands() {
+	end_copy_pass();
+	end_render_pass();
+	SDL_SubmitGPUCommandBuffer(m_cmd_transfer);
+	SDL_SubmitGPUCommandBuffer(m_cmd_render);
+	m_cmd_render = nullptr;
+	m_cmd_transfer = nullptr;
+	reset_command_buffers();
+}
+
+void RenderDeviceSDL::begin_copy_pass() {
+	if (m_copy_pass)
+		return;
+
+	m_copy_pass = SDL_BeginGPUCopyPass(m_cmd_transfer);
+}
+
+void RenderDeviceSDL::end_copy_pass() {
+	if (m_copy_pass != nullptr)
+		SDL_EndGPUCopyPass(m_copy_pass);
+	m_copy_pass = nullptr;
+}
+
+void RenderDeviceSDL::begin_render_pass(ClearInfo clear, Target* target) {
+
+}
+
+void RenderDeviceSDL::end_render_pass() {
+
 }
 
 Handle<ShaderResource> RenderDeviceSDL::create_shader(const ShaderDef& def) {
@@ -122,10 +200,6 @@ Handle<TargetResource> RenderDeviceSDL::create_target(u32 width, u32 height) {
 
 void RenderDeviceSDL::destroy_target(Handle<TargetResource> handle) {
 	if (auto target = m_targets.get(handle)) {
-		for (auto attachment : target->attachments) {
-			destroy_texture(attachment);
-		}
-
 		m_targets.erase(handle);
 	}
 }

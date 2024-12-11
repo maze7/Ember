@@ -55,6 +55,8 @@ add_library(
         include/ember/graphics/target.h
         include/ember/math/rect.h
         src/graphics/target.cpp
+        include/ember/graphics/color.h
+        src/graphics/color.cpp
 )
 
 # add include directories to Ember library

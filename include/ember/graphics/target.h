@@ -1,6 +1,5 @@
 #pragma once
 
-#include <span>
 #include <vector>
 
 #include "texture.h"
@@ -13,7 +12,7 @@ namespace Ember
 	{
 	public:
 		Target(u32 width, u32 height);
-		Target(u32 width, u32 height, std::span<TextureFormat> attachments);
+		Target(u32 width, u32 height, std::initializer_list<TextureFormat> attachments);
 		~Target();
 
 		[[nodiscard]] auto size() const {
@@ -24,11 +23,9 @@ namespace Ember
 			return m_attachments;
 		}
 
-		operator Handle<Target> () const { return m_resource; }
-
 	private:
 		Rect<u32> m_rect;
 		std::vector<Texture> m_attachments;
-		Handle<Target> m_resource = Handle<Target>::null;
+		Handle<TargetResource> m_resource = Handle<TargetResource>::null;
 	};
 }

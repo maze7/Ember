@@ -22,6 +22,8 @@ namespace Ember
 					return 1;
 				case TextureFormat::Depth24Stencil8:
 					return 4;
+				case TextureFormat::Color:
+					return 4;
 				default:
 					throw Exception("Unknown texture format");
 			}
