@@ -1,18 +1,18 @@
 #pragma once
 
-#include "texture_format.h"
+#include "graphics/texture_format.h"
+#include "platform/window.h"
 #include "core/common.h"
 #include "core/handle.h"
-#include "platform/window.h"
 
 namespace Ember
 {
 	struct ShaderDef;
 	struct ShaderResource {};
-	using ShaderHandle = Handle<ShaderResource>;
-
 	struct TextureResource {};
-	using TextureHandle = Handle<TextureResource>;
+	struct TargetResource {};
+
+	class Target;
 
 	class RenderDevice
 	{
@@ -24,12 +24,16 @@ namespace Ember
 		virtual void* native_handle() = 0;
 
 		// shader resources
-		virtual ShaderHandle create_shader(const ShaderDef& def) = 0;
-		virtual void destroy_shader(ShaderHandle handle) = 0;
+		virtual Handle<ShaderResource> create_shader(const ShaderDef& def) = 0;
+		virtual void destroy_shader(Handle<ShaderResource> handle) = 0;
 
 		// texture resources
-		virtual TextureHandle create_texture(u32 width, u32 height, TextureFormat format) = 0;
-		virtual void destroy_texture(TextureHandle handle) = 0;
+		virtual Handle<TextureResource> create_texture(u32 width, u32 height, TextureFormat format, Target* target) = 0;
+		virtual void destroy_texture(Handle<TextureResource> handle) = 0;
+
+		// render target resources
+		virtual Handle<TargetResource> create_target(u32 width, u32 height) = 0;
+		virtual void destroy_target(Handle<TargetResource> handle) = 0;
 	};
 
 	extern RenderDevice* render_device;

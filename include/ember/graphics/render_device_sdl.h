@@ -2,9 +2,9 @@
 
 #include <SDL3/SDL_gpu.h>
 
-#include "texture_format.h"
-#include "core/pool.h"
 #include "graphics/render_device.h"
+#include "graphics/texture_format.h"
+#include "core/pool.h"
 
 namespace Ember
 {
@@ -27,6 +27,11 @@ namespace Ember
 		u32 height;
 	};
 
+	struct TargetResourceSDL : TargetResource
+	{
+		std::vector<Handle<TextureResource>> attachments;
+	};
+
 	class RenderDeviceSDL final : public RenderDevice
 	{
 	public:
@@ -37,11 +42,14 @@ namespace Ember
 		void destroy() override;
 		void* native_handle() override { return m_gpu; }
 
-		ShaderHandle create_shader(const ShaderDef &def) override;
-		void destroy_shader(ShaderHandle handle) override;
+		Handle<ShaderResource> create_shader(const ShaderDef &def) override;
+		void destroy_shader(Handle<ShaderResource> handle) override;
 
-		TextureHandle create_texture(u32 width, u32 height, TextureFormat format) override;
-		void destroy_texture(TextureHandle handle) override;
+		Handle<TextureResource> create_texture(u32 width, u32 height, TextureFormat format, Target* target) override;
+		void destroy_texture(Handle<TextureResource> handle) override;
+
+		Handle<TargetResource> create_target(u32 width, u32 height) override;
+		void destroy_target(Handle<TargetResource> handle) override;
 
 	private:
 		bool					m_initialized = false;
@@ -50,5 +58,6 @@ namespace Ember
 
 		Pool<ShaderResourceSDL, ShaderResource>		m_shaders;
 		Pool<TextureResourceSDL, TextureResource>	m_textures;
+		Pool<TargetResourceSDL, TargetResource>		m_targets;
 	};
 }

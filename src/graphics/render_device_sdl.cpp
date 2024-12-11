@@ -46,7 +46,7 @@ RenderDeviceSDL::~RenderDeviceSDL() {
 		destroy();
 }
 
-ShaderHandle RenderDeviceSDL::create_shader(const ShaderDef& def) {
+Handle<ShaderResource> RenderDeviceSDL::create_shader(const ShaderDef& def) {
 	EMBER_ASSERT(m_initialized);
 
 	SDL_GPUShaderCreateInfo vertex_create_info = {
@@ -71,7 +71,7 @@ ShaderHandle RenderDeviceSDL::create_shader(const ShaderDef& def) {
 	return m_shaders.emplace(vertex, fragment);
 }
 
-void RenderDeviceSDL::destroy_shader(ShaderHandle handle) {
+void RenderDeviceSDL::destroy_shader(Handle<ShaderResource> handle) {
 	if (auto shader = m_shaders.get(handle)) {
 		Log::trace("Destroying shader: [slot: {}, gen: {}]", handle.slot, handle.gen);
 		SDL_ReleaseGPUShader(m_gpu, shader->vertex);
@@ -80,7 +80,7 @@ void RenderDeviceSDL::destroy_shader(ShaderHandle handle) {
 	}
 }
 
-TextureHandle RenderDeviceSDL::create_texture(u32 width, u32 height, TextureFormat format, Target* target) {
+Handle<TextureResource> RenderDeviceSDL::create_texture(u32 width, u32 height, TextureFormat format, Target* target) {
 	EMBER_ASSERT(m_initialized);
 
 	auto sdl_format = to_sdl_gpu_texture_format(format);
@@ -108,9 +108,24 @@ TextureHandle RenderDeviceSDL::create_texture(u32 width, u32 height, TextureForm
 	return m_textures.emplace(texture, sdl_format, width, height);
 }
 
-void RenderDeviceSDL::destroy_texture(TextureHandle handle) {
+void RenderDeviceSDL::destroy_texture(Handle<TextureResource> handle) {
 	if (auto texture = m_textures.get(handle)) {
 		Log::trace("Destroying texture: [slot: {}, gen: {}]", handle.slot, handle.gen);
 		SDL_ReleaseGPUTexture(m_gpu, texture->texture);
+	}
+}
+
+Handle<TargetResource> RenderDeviceSDL::create_target(u32 width, u32 height) {
+	EMBER_ASSERT(m_initialized);
+	return m_targets.emplace();
+}
+
+void RenderDeviceSDL::destroy_target(Handle<TargetResource> handle) {
+	if (auto target = m_targets.get(handle)) {
+		for (auto attachment : target->attachments) {
+			destroy_texture(attachment);
+		}
+
+		m_targets.erase(handle);
 	}
 }

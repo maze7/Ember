@@ -1,7 +1,7 @@
 #pragma once
 
-#include "render_device.h"
-#include "texture_format.h"
+#include "graphics/render_device.h"
+#include "graphics/texture.h"
 #include "core/common.h"
 #include "math/vector2.h"
 
@@ -18,6 +18,6 @@ namespace Ember
 		bool m_is_target_attachment = false;
 		Vector2u m_size = Vector2u::zero;
 		TextureFormat m_format = TextureFormat::Color;
-		TextureHandle m_resource = Handle<TextureResource>::null;
+		Handle<TextureResource> m_resource = Handle<TextureResource>::null;
 	};
 }

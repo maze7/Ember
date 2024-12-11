@@ -20,6 +20,6 @@ namespace Ember
 		~Shader();
 
 	private:
-		ShaderHandle m_resource = Handle<ShaderResource>::null;
+		Handle<ShaderResource> m_resource = Handle<ShaderResource>::null;
 	};
 }
