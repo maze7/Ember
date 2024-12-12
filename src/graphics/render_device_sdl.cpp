@@ -132,18 +132,19 @@ bool RenderDeviceSDL::begin_render_pass(ClearInfo clear, Target* target) {
 	end_render_pass();
 
 	m_render_pass_target = target;
-	std::vector<SDL_GPUTexture*> color_targets(4);
+	std::vector<SDL_GPUTexture*> color_targets;
+	color_targets.reserve(4);
 	SDL_GPUTexture* depth_stencil_target = nullptr;
 
 	auto target_size = m_render_pass_target->size();
-	for (auto& attachment : target->attachments) {
-		auto texture = m_textures.get(attachment);
+	for (auto& attachment : target->attachments()) {
+		auto texture = m_textures.get(attachment.handle());
 
-		if (texture && texture->is_target_attachment && clear.color.has_value() && clear.depth.has_value() && clear.stencil.has_value()) {
-			if (texture->format == TextureFormat::Depth24Stencil8)
-				depth_stencil_target = texture;
+		if (texture && texture->is_target_attachment) {
+			if (texture->format == SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT || texture->format == SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT)
+				depth_stencil_target = texture->texture;
 			else
-				color_targets.push_back(texture);
+				color_targets.push_back(texture->texture);
 		} else {
 			throw Exception("Drawing to an invalid texture");
 		}
@@ -160,10 +161,10 @@ bool RenderDeviceSDL::begin_render_pass(ClearInfo clear, Target* target) {
 			.mip_level = 0,
 			.layer_or_depth_plane = 0,
 			.clear_color = SDL_FColor{
-				.r = 255 / (float) clear_color.r,
-				.g = 255 / (float) clear_color.g,
-				.b = 255 / (float) clear_color.b,
-				.a = 255 / (float) clear_color.a,
+				.r = (float) clear_color.r / 255,
+				.g = (float) clear_color.g / 255,
+				.b = (float) clear_color.b / 255,
+				.a = (float) clear_color.a / 255,
 			},
 			.load_op = clear.color.has_value() ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD,
 			.store_op = SDL_GPU_STOREOP_STORE,
@@ -213,9 +214,9 @@ void RenderDeviceSDL::clear(Color color, float depth, int stencil, ClearMask mas
 
 	if (mask != ClearMask::None) {
 		begin_render_pass({
-			.color = (i32) mask & (i32) ClearMask::Color ? color : std::nullopt,
-			.depth = (i32) mask & (i32) ClearMask::Depth ? depth : std::nullopt,
-			.stencil = (i32) mask & (i32) ClearMask::Stencil ? stencil : std::nullopt,
+			.color = (i32) mask & (i32) ClearMask::Color ? std::optional<Color>(color) : std::nullopt,
+			.depth = (i32) mask & (i32) ClearMask::Depth ? std::optional<float>(depth) : std::nullopt,
+			.stencil = (i32) mask & (i32) ClearMask::Stencil ? std::optional<int>(stencil) : std::nullopt,
 		}, target);
 	}
 }
