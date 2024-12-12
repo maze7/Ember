@@ -20,24 +20,30 @@ namespace Ember
 
 	struct TextureResourceSDL : TextureResource
 	{
-		TextureResourceSDL(SDL_GPUTexture* texture, SDL_GPUTextureFormat format, u32 width, u32 height)
-			: texture(texture), format(format), width(width), height(height) {}
+		TextureResourceSDL(SDL_GPUTexture* texture, SDL_GPUTextureFormat format, u32 width, u32 height, bool is_target = false)
+			: texture(texture), format(format), width(width), height(height), is_target_attachment(is_target) {}
 
 		SDL_GPUTexture* texture;
 		SDL_GPUTextureFormat format;
 		u32 width;
 		u32 height;
+		bool is_target_attachment;
 	};
 
 	class RenderDeviceSDL final : public RenderDevice
 	{
 	public:
+		static constexpr u32 MAX_FRAMES_IN_FLIGHT = 3;
+
 		RenderDeviceSDL() = default;
 		~RenderDeviceSDL() override;
 
 		void init(Window *window) override;
 		void destroy() override;
 		void* native_handle() override { return m_gpu; }
+
+		void clear(Color color, float depth, int stencil, ClearMask mask, Target* target = nullptr) override;
+		void present() override;
 
 		Handle<ShaderResource> create_shader(const ShaderDef &def) override;
 		void destroy_shader(Handle<ShaderResource> handle) override;
@@ -51,17 +57,20 @@ namespace Ember
 	private:
 		struct ClearInfo
 		{
-			Color color;
-			float depth;
-			int stencil;
+			std::optional<Color> color;
+			std::optional<float> depth;
+			std::optional<int> stencil;
 		};
 
 		void reset_command_buffers();
 		void flush_commands();
 		void begin_copy_pass();
 		void end_copy_pass();
-		void begin_render_pass(ClearInfo clear, Target* target = nullptr);
+		bool begin_render_pass(ClearInfo clear, Target* target = nullptr);
 		void end_render_pass();
+
+		u32 m_frame = 0;
+		SDL_GPUFence* m_fences[MAX_FRAMES_IN_FLIGHT][2];
 
 		bool					m_initialized = false;
 		Window*					m_window = nullptr;
@@ -79,6 +88,7 @@ namespace Ember
 		SDL_GPUCommandBuffer*	m_cmd_transfer = nullptr;
 		SDL_GPUCopyPass*		m_copy_pass = nullptr;
 		SDL_GPURenderPass*		m_render_pass = nullptr;
+		Target*					m_render_pass_target = nullptr;
 
 		u32 m_texture_transfer_buffer_offset = 0;
 		u32 m_texture_transfer_buffer_cycle_count = 0;

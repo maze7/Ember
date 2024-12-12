@@ -1,5 +1,6 @@
 #pragma once
 
+#include "color.h"
 #include "graphics/texture_format.h"
 #include "platform/window.h"
 #include "core/common.h"
@@ -7,11 +8,19 @@
 
 namespace Ember
 {
+	enum class ClearMask : i32
+	{
+		None = 0,
+		Color = 1 << 0,
+		Depth = 1 << 1,
+		Stencil = 1 << 2,
+		All = Color | Depth | Stencil
+	};
+
 	struct ShaderDef;
 	struct ShaderResource {};
 	struct TextureResource {};
 	struct TargetResource {};
-
 	class Target;
 
 	class RenderDevice
@@ -22,6 +31,9 @@ namespace Ember
 		virtual void init(Window* window) = 0;
 		virtual void destroy() = 0;
 		virtual void* native_handle() = 0;
+
+		virtual void clear(Color color, float depth, int stencil, ClearMask mask, Target* target = nullptr) = 0;
+		virtual void present() = 0;
 
 		// shader resources
 		virtual Handle<ShaderResource> create_shader(const ShaderDef& def) = 0;

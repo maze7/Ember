@@ -66,6 +66,11 @@ void RenderDeviceSDL::destroy() {
 	for (auto texture : m_textures)
 		destroy_texture(texture);
 
+	for (auto& m_fence : m_fences) {
+		SDL_ReleaseGPUFence(m_gpu, m_fence[0]);
+		SDL_ReleaseGPUFence(m_gpu, m_fence[1]);
+	}
+
 	// destroy transfer buffers
 	SDL_ReleaseGPUTransferBuffer(m_gpu, m_texture_transfer_buffer);
 	SDL_ReleaseGPUTransferBuffer(m_gpu, m_buffer_transfer_buffer);
@@ -116,12 +121,175 @@ void RenderDeviceSDL::end_copy_pass() {
 	m_copy_pass = nullptr;
 }
 
-void RenderDeviceSDL::begin_render_pass(ClearInfo clear, Target* target) {
+bool RenderDeviceSDL::begin_render_pass(ClearInfo clear, Target* target) {
+	if (target == nullptr)
+		target = m_framebuffer.get();
 
+	// only begin pass if we're not already in a render pass that is matching
+	if (m_render_pass && m_render_pass_target == target)
+		return false;
+
+	end_render_pass();
+
+	m_render_pass_target = target;
+	std::vector<SDL_GPUTexture*> color_targets(4);
+	SDL_GPUTexture* depth_stencil_target = nullptr;
+
+	auto target_size = m_render_pass_target->size();
+	for (auto& attachment : target->attachments) {
+		auto texture = m_textures.get(attachment);
+
+		if (texture && texture->is_target_attachment && clear.color.has_value() && clear.depth.has_value() && clear.stencil.has_value()) {
+			if (texture->format == TextureFormat::Depth24Stencil8)
+				depth_stencil_target = texture;
+			else
+				color_targets.push_back(texture);
+		} else {
+			throw Exception("Drawing to an invalid texture");
+		}
+	}
+
+	std::vector<SDL_GPUColorTargetInfo> color_info(color_targets.size());
+	SDL_GPUDepthStencilTargetInfo depth_stencil_info;
+	auto clear_color = clear.color.value_or(Color::Transparent);
+
+	// get color infos
+	for (u8 i = 0; i < color_targets.size(); i++) {
+		color_info[i] = SDL_GPUColorTargetInfo{
+			.texture = color_targets[i],
+			.mip_level = 0,
+			.layer_or_depth_plane = 0,
+			.clear_color = SDL_FColor{
+				.r = 255 / (float) clear_color.r,
+				.g = 255 / (float) clear_color.g,
+				.b = 255 / (float) clear_color.b,
+				.a = 255 / (float) clear_color.a,
+			},
+			.load_op = clear.color.has_value() ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD,
+			.store_op = SDL_GPU_STOREOP_STORE,
+			.cycle = clear.color.has_value()
+		};
+	}
+
+	// get depth info
+	if (depth_stencil_target) {
+		depth_stencil_info = SDL_GPUDepthStencilTargetInfo{
+			.texture = depth_stencil_target,
+			.clear_depth = clear.depth.value_or(0),
+			.load_op = clear.depth.has_value() ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD,
+			.store_op = SDL_GPU_STOREOP_STORE,
+			.stencil_load_op = clear.stencil.has_value() ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD,
+			.stencil_store_op = SDL_GPU_STOREOP_STORE,
+			.cycle = clear.depth.has_value() && clear.stencil.has_value(),
+			.clear_stencil = (u8)(clear.stencil.value_or(0)),
+		};
+	}
+
+	// begin render passs
+	m_render_pass = SDL_BeginGPURenderPass(
+		m_cmd_render,
+		color_info.data(),
+		color_targets.size(),
+		depth_stencil_target ? &depth_stencil_info : nullptr
+	);
+
+	return m_render_pass != nullptr;
 }
 
 void RenderDeviceSDL::end_render_pass() {
+	if (m_render_pass)
+		SDL_EndGPURenderPass(m_render_pass);
 
+	m_render_pass = nullptr;
+	m_render_pass_target = nullptr;
+	// m_render_pass_pipeline = nullptr;
+	// m_render_pass_mesh = nullptr;
+	// m_render_pass_viewport = nullptr;
+	// m_render_pass_scissor = nullptr;
+}
+
+void RenderDeviceSDL::clear(Color color, float depth, int stencil, ClearMask mask, Target *target) {
+	EMBER_ASSERT(m_initialized);
+
+	if (mask != ClearMask::None) {
+		begin_render_pass({
+			.color = (i32) mask & (i32) ClearMask::Color ? color : std::nullopt,
+			.depth = (i32) mask & (i32) ClearMask::Depth ? depth : std::nullopt,
+			.stencil = (i32) mask & (i32) ClearMask::Stencil ? stencil : std::nullopt,
+		}, target);
+	}
+}
+
+void RenderDeviceSDL::present() {
+	end_copy_pass();
+	end_render_pass();
+
+	// Wait for the least-recent fence
+	if (m_fences[m_frame][0] || m_fences[m_frame][1]) {
+		SDL_WaitForGPUFences(m_gpu, true, m_fences[m_frame], 2);
+		SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][0]);
+		SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][1]);
+	}
+
+	// if swapchain can be acquired, blit framebuffer to it
+	SDL_GPUTexture* swapchain_texture = nullptr;
+	Vector2u swapchain_size;
+	if (SDL_AcquireGPUSwapchainTexture(m_cmd_render, m_window->native_handle(), &swapchain_texture, &swapchain_size.x, &swapchain_size.y)) {
+		// SDL_AcquireGPUSwapchainTexture can return true, but no texture for a variety of reasons
+		// - window is minimized
+		// - awaiting previous frame render
+		if (swapchain_texture) {
+			auto framebuffer = m_textures.get(m_framebuffer->attachments()[0].handle());
+
+			SDL_GPUBlitInfo blit_info;
+			blit_info.source.texture = framebuffer->texture;
+			blit_info.source.mip_level = 0;
+			blit_info.source.layer_or_depth_plane = 0;
+			blit_info.source.x = 0;
+			blit_info.source.y = 0;
+			blit_info.source.w = framebuffer->width;
+			blit_info.source.h = framebuffer->height;
+
+			blit_info.destination.texture = swapchain_texture;
+			blit_info.destination.mip_level = 0;
+			blit_info.destination.layer_or_depth_plane = 0;
+			blit_info.destination.x = 0;
+			blit_info.destination.y = 0;
+			blit_info.destination.w = swapchain_size.x;
+			blit_info.destination.h = swapchain_size.y;
+
+			blit_info.load_op = SDL_GPU_LOADOP_DONT_CARE;
+			blit_info.clear_color.r = 0;
+			blit_info.clear_color.g = 0;
+			blit_info.clear_color.b = 0;
+			blit_info.clear_color.a = 0;
+			blit_info.flip_mode = SDL_FLIP_NONE;
+			blit_info.filter = SDL_GPU_FILTER_LINEAR;
+			blit_info.cycle = false;
+
+			SDL_BlitGPUTexture(m_cmd_render, &blit_info);
+
+			// resize framebuffer if needed
+			if (swapchain_size.x != framebuffer->width || swapchain_size.y != framebuffer->height) {
+				m_framebuffer.reset();
+				m_framebuffer = std::make_unique<Target>(swapchain_size.x, swapchain_size.y);
+				Log::info("Framebuffer recreated: {}x{}", swapchain_size.x, swapchain_size.y);
+			}
+		}
+	}
+
+	// flush commands from this frame
+	{
+		end_copy_pass();
+		end_render_pass();
+		m_fences[m_frame][0] = SDL_SubmitGPUCommandBufferAndAcquireFence(m_cmd_transfer);
+		m_fences[m_frame][1] = SDL_SubmitGPUCommandBufferAndAcquireFence(m_cmd_render);
+		m_cmd_transfer = nullptr;
+		m_cmd_render = nullptr;
+		reset_command_buffers();
+	}
+
+	m_frame = (m_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 Handle<ShaderResource> RenderDeviceSDL::create_shader(const ShaderDef& def) {
@@ -183,7 +351,7 @@ Handle<TextureResource> RenderDeviceSDL::create_texture(u32 width, u32 height, T
 
 	// create texture resource and add to texture pool
 	auto texture = SDL_CreateGPUTexture(m_gpu, &info);
-	return m_textures.emplace(texture, sdl_format, width, height);
+	return m_textures.emplace(texture, sdl_format, width, height, target != nullptr);
 }
 
 void RenderDeviceSDL::destroy_texture(Handle<TextureResource> handle) {
