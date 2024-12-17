@@ -8,7 +8,7 @@
 
 namespace Ember
 {
-	template<class T, class HandleType = T, int PoolSize = 1024>
+	template<class T, class HandleType = T, int PoolSize = 256>
 	class Pool
 	{
 	public:

@@ -57,6 +57,7 @@ add_library(
         src/graphics/target.cpp
         include/ember/graphics/color.h
         src/graphics/color.cpp
+        include/ember/graphics/vertex_type.h
 )
 
 # add include directories to Ember library
