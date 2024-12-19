@@ -43,6 +43,7 @@ namespace Ember
 		void* native_handle() override { return m_gpu; }
 
 		void clear(Color color, float depth, int stencil, ClearMask mask, Target* target = nullptr) override;
+		void draw(DrawCommand cmd) override;
 		void present() override;
 
 		Handle<ShaderResource> create_shader(const ShaderDef &def) override;
@@ -68,6 +69,7 @@ namespace Ember
 		void end_copy_pass();
 		bool begin_render_pass(ClearInfo clear, Target* target = nullptr);
 		void end_render_pass();
+		SDL_GPUGraphicsPipeline* get_pso(DrawCommand cmd);
 
 		u32 m_frame = 0;
 		SDL_GPUFence* m_fences[MAX_FRAMES_IN_FLIGHT][2];
@@ -89,6 +91,10 @@ namespace Ember
 		SDL_GPUCopyPass*		m_copy_pass = nullptr;
 		SDL_GPURenderPass*		m_render_pass = nullptr;
 		Target*					m_render_pass_target = nullptr;
+
+		std::unordered_map<u64, SDL_GPUGraphicsPipeline*> m_pso_cache;
+		std::unordered_map<Handle<ShaderResource>, SDL_GPUGraphicsPipeline*> m_pso_shaders;
+		SDL_GPUGraphicsPipeline* m_render_pass_pso = nullptr;
 
 		u32 m_texture_transfer_buffer_offset = 0;
 		u32 m_texture_transfer_buffer_cycle_count = 0;

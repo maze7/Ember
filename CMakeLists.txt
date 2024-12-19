@@ -62,6 +62,7 @@ add_library(
         include/ember/graphics/material.h
         include/ember/graphics/uniform_type.h
         src/graphics/material.cpp
+        include/ember/core/hash.h
 )
 
 # add include directories to Ember library

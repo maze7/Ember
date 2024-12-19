@@ -56,6 +56,8 @@ namespace Ember
 			return m_resource == rhs.m_resource;
 		}
 
+		auto handle() const { return m_resource; }
+
 	private:
 		Program m_vertex;
 		Program m_fragment;

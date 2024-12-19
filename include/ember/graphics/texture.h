@@ -2,6 +2,8 @@
 
 #include "graphics/render_device.h"
 #include "graphics/texture.h"
+#include "graphics/texture_format.h"
+#include "graphics/target.h"
 #include "core/common.h"
 #include "math/vector2.h"
 
@@ -35,6 +37,7 @@ namespace Ember
 		~Texture();
 
 		Handle<TextureResource> handle() const { return m_resource; }
+		TextureFormat format() const { return m_format; }
 
 	private:
 		bool m_is_target_attachment = false;

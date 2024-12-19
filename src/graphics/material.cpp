@@ -11,17 +11,14 @@ void Material::set_shader(Shader &shader) {
 		return;
 
 	m_shader = shader;
-}
-
-void Material::init_buffers() {
 	m_vertex_uniform_buffer.resize(m_shader.vertex().uniform_buffer_size());
 	m_fragment_uniform_buffer.resize(m_shader.fragment().uniform_buffer_size());
 }
 
 void Material::reset() {
 	// zero out uniform buffers and samplers
-	std::fill(m_vertex_uniform_buffer.begin(), m_vertex_uniform_buffer.end(), std::byte(0));
-	std::fill(m_fragment_uniform_buffer.begin(), m_fragment_uniform_buffer.end(), std::byte(0));
+	std::ranges::fill(m_vertex_uniform_buffer, static_cast<std::byte>(0));
+	std::ranges::fill(m_fragment_uniform_buffer, static_cast<std::byte>(0));
 	m_vertex_samplers.clear();
 	m_fragment_samplers.clear();
 }

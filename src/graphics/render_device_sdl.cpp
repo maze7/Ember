@@ -1,4 +1,6 @@
 #include "graphics/render_device_sdl.h"
+
+#include "core/hash.h"
 #include "graphics/shader.h"
 
 using namespace Ember;
@@ -219,6 +221,132 @@ void RenderDeviceSDL::clear(Color color, float depth, int stencil, ClearMask mas
 			.stencil = (i32) mask & (i32) ClearMask::Stencil ? std::optional<int>(stencil) : std::nullopt,
 		}, target);
 	}
+}
+
+void RenderDeviceSDL::draw(DrawCommand cmd) {
+	EMBER_ASSERT(m_initialized);
+
+	auto& mat = cmd.material;
+	auto& shader = mat.shader();
+	auto  target = cmd.target;
+
+	if (!begin_render_pass(ClearInfo(), target))
+		return;
+
+	// set scissor
+	{
+		SDL_Rect rect{ 0, 0, m_render_pass_target->size().x, m_render_pass_target->size().y };
+		SDL_SetGPUScissor(m_render_pass, &rect);
+	}
+
+	// set viewport
+	{
+		SDL_GPUViewport viewport{
+			.x = 0, .y = 0,
+			.w = m_render_pass_target->size().x, .h = m_render_pass_target->size().y,
+			.min_depth = 0, .max_depth = std::numeric_limits<float>::infinity()
+		};
+		SDL_SetGPUViewport(m_render_pass, &viewport);
+	}
+
+	// figure out graphics pipeline, potentially create a new one on-demand
+	auto pso = get_pso(cmd);
+	if (pso != m_render_pass_pso) {
+		m_render_pass_pso = pso;
+		SDL_BindGPUGraphicsPipeline(m_render_pass, pso);
+	}
+
+	// upload vertex uniforms
+	if (!shader.vertex().uniforms.empty())
+		SDL_PushGPUVertexUniformData(m_cmd_render, 0, (const void*)mat.vertex_data(), shader.vertex().uniform_buffer_size());
+
+	// upload fragment uniforms
+	if (!shader.fragment().uniforms.empty())
+		SDL_PushGPUFragmentUniformData(m_cmd_render, 0, (const void*)mat.fragment_data(), shader.fragment().uniform_buffer_size());
+
+	// perform draw
+	SDL_DrawGPUPrimitives(m_render_pass, 3, 1, 0, 0);
+}
+
+SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
+	EMBER_ASSERT(m_initialized);
+
+	auto hash = combined_hash(
+		cmd.target,
+		cmd.material.shader().handle()
+	);
+
+	if (!cmd.target)
+		cmd.target = m_framebuffer.get();
+
+	auto& shader = cmd.material.shader();
+	auto shader_res = m_shaders.get(shader.handle());
+	auto target = cmd.target;
+	SDL_GPUGraphicsPipeline* pipeline = nullptr;
+
+	if (!m_pso_cache.at(hash)) {
+		SDL_GPUTextureFormat depth_stencil_attachment = SDL_GPU_TEXTUREFORMAT_INVALID;
+		SDL_GPUColorTargetDescription color_attachments[4];
+		SDL_GPUColorTargetBlendState color_blend_state;
+		u8 color_attachment_count = 0;
+
+		if (cmd.target) {
+			for (auto& t : cmd.target->attachments()) {
+				if (t.format() == TextureFormat::Depth24Stencil8) {
+					depth_stencil_attachment = to_sdl_gpu_texture_format(t.format());
+				} else {
+					color_attachments[color_attachment_count++] = {
+						.format = to_sdl_gpu_texture_format(t.format()),
+						.blend_state = color_blend_state,
+					};
+				}
+			}
+		}
+
+		SDL_GPUGraphicsPipelineCreateInfo info = {
+			.vertex_shader = shader_res->vertex,
+			.fragment_shader = shader_res->fragment,
+			.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+			.rasterizer_state = {
+				.fill_mode = SDL_GPU_FILLMODE_FILL,
+				.cull_mode = SDL_GPU_CULLMODE_BACK,
+				.front_face = SDL_GPU_FRONTFACE_CLOCKWISE,
+				.enable_depth_bias = false,
+			},
+			.multisample_state = {
+				.sample_count = SDL_GPU_SAMPLECOUNT_1,
+				.sample_mask = 0xFFFFFFFF
+			},
+			.depth_stencil_state = {
+				.compare_op = SDL_GPU_COMPAREOP_NEVER,
+				.compare_mask = 0xFF,
+				.write_mask = 0xFF,
+				.enable_depth_test = false,
+				.enable_depth_write = false,
+				.enable_stencil_test = false,
+			},
+			.target_info = {
+				.color_target_descriptions = color_attachments,
+				.num_color_targets = color_attachment_count,
+				.has_depth_stencil_target = depth_stencil_attachment != SDL_GPU_TEXTUREFORMAT_INVALID,
+				.depth_stencil_format = depth_stencil_attachment,
+			}
+		};
+
+		pipeline = SDL_CreateGPUGraphicsPipeline(m_gpu, &info);
+		if (!pipeline)
+			throw Exception("Unable to create PSO");
+
+		// track which shader this pipeline uses
+		if (!m_pso_shaders.at(shader.handle()))
+			m_pso_shaders[shader.handle()] = std::vector<SDL_GPUGraphicsPipeline*>();
+		m_pso_shaders[shader.handle()].push_back(pipeline);
+
+		// store the PSO in the pso cache
+		m_pso_cache[hash] = pipeline;
+	}
+
+	return m_pso_cache[hash];
 }
 
 void RenderDeviceSDL::present() {

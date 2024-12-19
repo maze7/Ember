@@ -1,6 +1,7 @@
 #pragma once
 
 #include "color.h"
+#include "draw_command.h"
 #include "graphics/texture_format.h"
 #include "platform/window.h"
 #include "core/common.h"
@@ -33,6 +34,7 @@ namespace Ember
 		virtual void* native_handle() = 0;
 
 		virtual void clear(Color color, float depth, int stencil, ClearMask mask, Target* target = nullptr) = 0;
+		virtual void draw(DrawCommand cmd) = 0;
 		virtual void present() = 0;
 
 		// shader resources
