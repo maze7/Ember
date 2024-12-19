@@ -7,6 +7,26 @@
 
 namespace Ember
 {
+	enum class TextureFilter
+	{
+		Nearest,
+		Linear,
+	};
+
+	enum class TextureWrap
+	{
+		Repeat,
+		MirroredRepeat,
+		Clamp,
+	};
+
+	struct TextureSampler
+	{
+		TextureFilter filter;
+		TextureWrap wrap_x;
+		TextureWrap wrap_y;
+	};
+
 	class Texture
 	{
 	public:

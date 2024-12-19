@@ -58,6 +58,10 @@ add_library(
         include/ember/graphics/color.h
         src/graphics/color.cpp
         include/ember/graphics/vertex_type.h
+        include/ember/graphics/draw_command.h
+        include/ember/graphics/material.h
+        include/ember/graphics/uniform_type.h
+        src/graphics/material.cpp
 )
 
 # add include directories to Ember library
