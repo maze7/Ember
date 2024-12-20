@@ -3,7 +3,7 @@ project(Ember)
 
 # c++ version & compiler flags
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Og")
 set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_PROFILE} -O3")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 
@@ -47,22 +47,23 @@ add_library(
     include/ember/graphics/texture.h
     include/ember/graphics/render_device_sdl.h
     src/graphics/render_device_sdl.cpp
-        include/ember/graphics/shader.h
-        src/graphics/shader.cpp
-        src/graphics/render_device.cpp
-        include/ember/graphics/texture_format.h
-        src/graphics/texture.cpp
-        include/ember/graphics/target.h
-        include/ember/math/rect.h
-        src/graphics/target.cpp
-        include/ember/graphics/color.h
-        src/graphics/color.cpp
-        include/ember/graphics/vertex_type.h
-        include/ember/graphics/draw_command.h
-        include/ember/graphics/material.h
-        include/ember/graphics/uniform_type.h
-        src/graphics/material.cpp
-        include/ember/core/hash.h
+    include/ember/graphics/shader.h
+    src/graphics/shader.cpp
+    src/graphics/render_device.cpp
+    include/ember/graphics/texture_format.h
+    src/graphics/texture.cpp
+    include/ember/graphics/target.h
+    include/ember/math/rect.h
+    src/graphics/target.cpp
+    include/ember/graphics/color.h
+    src/graphics/color.cpp
+    include/ember/graphics/vertex_type.h
+    include/ember/graphics/draw_command.h
+    include/ember/graphics/material.h
+    include/ember/graphics/uniform_type.h
+    src/graphics/material.cpp
+    include/ember/core/hash.h
+    src/graphics/draw_command.cpp
 )
 
 # add include directories to Ember library

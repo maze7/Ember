@@ -27,7 +27,7 @@ void RenderDeviceSDL::init(Window* window) {
 	EMBER_ASSERT(!m_initialized);
 
 	m_window = window;
-	m_gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, nullptr);
+	m_gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, true, nullptr);
 	SDL_ClaimWindowForGPUDevice(m_gpu, m_window->native_handle());
 
 	// init command buffers
@@ -131,7 +131,7 @@ bool RenderDeviceSDL::begin_render_pass(ClearInfo clear, Target* target) {
 
 	// only begin pass if we're not already in a render pass that is matching
 	if (m_render_pass && m_render_pass_target == target)
-		return false;
+		return true;
 
 	end_render_pass();
 
@@ -207,7 +207,7 @@ void RenderDeviceSDL::end_render_pass() {
 
 	m_render_pass = nullptr;
 	m_render_pass_target = nullptr;
-	// m_render_pass_pipeline = nullptr;
+	m_render_pass_pso = nullptr;
 	// m_render_pass_mesh = nullptr;
 	// m_render_pass_viewport = nullptr;
 	// m_render_pass_scissor = nullptr;
@@ -246,7 +246,7 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 		SDL_GPUViewport viewport{
 			.x = 0, .y = 0,
 			.w = m_render_pass_target->size().x, .h = m_render_pass_target->size().y,
-			.min_depth = 0, .max_depth = std::numeric_limits<float>::infinity()
+			.min_depth = 0, .max_depth = 1,
 		};
 		SDL_SetGPUViewport(m_render_pass, &viewport);
 	}
@@ -254,17 +254,17 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 	// figure out graphics pipeline, potentially create a new one on-demand
 	auto pso = get_pso(cmd);
 	if (pso != m_render_pass_pso) {
-		m_render_pass_pso = pso;
 		SDL_BindGPUGraphicsPipeline(m_render_pass, pso);
+		m_render_pass_pso = pso;
 	}
 
 	// upload vertex uniforms
-	if (!shader.vertex().uniforms.empty())
-		SDL_PushGPUVertexUniformData(m_cmd_render, 0, (const void*)mat.vertex_data(), shader.vertex().uniform_buffer_size());
-
-	// upload fragment uniforms
-	if (!shader.fragment().uniforms.empty())
-		SDL_PushGPUFragmentUniformData(m_cmd_render, 0, (const void*)mat.fragment_data(), shader.fragment().uniform_buffer_size());
+	// if (!shader.vertex().uniforms.empty())
+	// 	SDL_PushGPUVertexUniformData(m_cmd_render, 0, (const void*)mat.vertex_data(), shader.vertex().uniform_buffer_size());
+	//
+	// // upload fragment uniforms
+	// if (!shader.fragment().uniforms.empty())
+	// 	SDL_PushGPUFragmentUniformData(m_cmd_render, 0, (const void*)mat.fragment_data(), shader.fragment().uniform_buffer_size());
 
 	// perform draw
 	SDL_DrawGPUPrimitives(m_render_pass, 3, 1, 0, 0);
@@ -286,7 +286,7 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 	auto target = cmd.target;
 	SDL_GPUGraphicsPipeline* pipeline = nullptr;
 
-	if (!m_pso_cache.at(hash)) {
+	if (!m_pso_cache.contains(hash)) {
 		SDL_GPUTextureFormat depth_stencil_attachment = SDL_GPU_TEXTUREFORMAT_INVALID;
 		SDL_GPUColorTargetDescription color_attachments[4];
 		SDL_GPUColorTargetBlendState color_blend_state{};
@@ -311,8 +311,8 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 			.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
 			.rasterizer_state = {
 				.fill_mode = SDL_GPU_FILLMODE_FILL,
-				.cull_mode = SDL_GPU_CULLMODE_BACK,
-				.front_face = SDL_GPU_FRONTFACE_CLOCKWISE,
+				.cull_mode = SDL_GPU_CULLMODE_NONE,
+				.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
 				.enable_depth_bias = false,
 			},
 			.multisample_state = {
