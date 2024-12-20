@@ -2,12 +2,14 @@
 
 #include <vector>
 
-#include "texture.h"
+#include "graphics/texture.h"
+#include "graphics/texture_format.h"
 #include "core/common.h"
 #include "math/rect.h"
 
 namespace Ember
 {
+	struct TargetResource;
 	class Target
 	{
 	public:

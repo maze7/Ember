@@ -3,9 +3,9 @@
 #include "graphics/render_device.h"
 #include "graphics/texture.h"
 #include "graphics/texture_format.h"
-#include "graphics/target.h"
 #include "core/common.h"
 #include "math/vector2.h"
+#include "core/handle.h"
 
 namespace Ember
 {
@@ -29,6 +29,8 @@ namespace Ember
 		TextureWrap wrap_y;
 	};
 
+	struct TextureResource;
+	class Target;
 	class Texture
 	{
 	public:

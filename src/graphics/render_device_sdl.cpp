@@ -1,5 +1,5 @@
 #include "graphics/render_device_sdl.h"
-
+#include "graphics/material.h"
 #include "core/hash.h"
 #include "graphics/shader.h"
 
@@ -82,6 +82,8 @@ void RenderDeviceSDL::destroy() {
 
 	m_initialized = false;
 }
+
+RenderDeviceSDL::RenderDeviceSDL(): m_pso_shaders() {}
 
 RenderDeviceSDL::~RenderDeviceSDL() {
 	if (m_initialized)
@@ -287,7 +289,7 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 	if (!m_pso_cache.at(hash)) {
 		SDL_GPUTextureFormat depth_stencil_attachment = SDL_GPU_TEXTUREFORMAT_INVALID;
 		SDL_GPUColorTargetDescription color_attachments[4];
-		SDL_GPUColorTargetBlendState color_blend_state;
+		SDL_GPUColorTargetBlendState color_blend_state{};
 		u8 color_attachment_count = 0;
 
 		if (cmd.target) {
@@ -328,8 +330,8 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 			.target_info = {
 				.color_target_descriptions = color_attachments,
 				.num_color_targets = color_attachment_count,
-				.has_depth_stencil_target = depth_stencil_attachment != SDL_GPU_TEXTUREFORMAT_INVALID,
 				.depth_stencil_format = depth_stencil_attachment,
+				.has_depth_stencil_target = depth_stencil_attachment != SDL_GPU_TEXTUREFORMAT_INVALID,
 			}
 		};
 
@@ -338,7 +340,7 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 			throw Exception("Unable to create PSO");
 
 		// track which shader this pipeline uses
-		if (!m_pso_shaders.at(shader.handle()))
+		if (!m_pso_shaders.contains(shader.handle()))
 			m_pso_shaders[shader.handle()] = std::vector<SDL_GPUGraphicsPipeline*>();
 		m_pso_shaders[shader.handle()].push_back(pipeline);
 

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "color.h"
-#include "draw_command.h"
 #include "graphics/texture_format.h"
 #include "platform/window.h"
 #include "core/common.h"
@@ -22,6 +21,7 @@ namespace Ember
 	struct ShaderResource {};
 	struct TextureResource {};
 	struct TargetResource {};
+	struct DrawCommand;
 	class Target;
 
 	class RenderDevice

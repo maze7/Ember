@@ -5,6 +5,7 @@
 #include "graphics/render_device.h"
 #include "graphics/texture_format.h"
 #include "graphics/target.h"
+#include "graphics/draw_command.h"
 #include "graphics/color.h"
 #include "core/pool.h"
 
@@ -35,7 +36,7 @@ namespace Ember
 	public:
 		static constexpr u32 MAX_FRAMES_IN_FLIGHT = 3;
 
-		RenderDeviceSDL() = default;
+		RenderDeviceSDL();
 		~RenderDeviceSDL() override;
 
 		void init(Window *window) override;
@@ -93,7 +94,7 @@ namespace Ember
 		Target*					m_render_pass_target = nullptr;
 
 		std::unordered_map<u64, SDL_GPUGraphicsPipeline*> m_pso_cache;
-		std::unordered_map<Handle<ShaderResource>, SDL_GPUGraphicsPipeline*> m_pso_shaders;
+		std::unordered_map<Handle<ShaderResource>, std::vector<SDL_GPUGraphicsPipeline*>> m_pso_shaders;
 		SDL_GPUGraphicsPipeline* m_render_pass_pso = nullptr;
 
 		u32 m_texture_transfer_buffer_offset = 0;

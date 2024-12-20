@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hash.h"
 #include "core/common.h"
 
 namespace Ember
@@ -18,6 +19,17 @@ namespace Ember
 
 		[[nodiscard]] constexpr bool operator==(const Handle<T>& other) const {
 				return slot == other.slot && gen == other.gen;
+		}
+	};
+}
+
+namespace std
+{
+	template <class T>
+	struct hash<Ember::Handle<T>>
+	{
+		std::size_t operator()(const Ember::Handle<T>& handle) const {
+			return Ember::combined_hash(handle.slot, handle.gen);
 		}
 	};
 }
