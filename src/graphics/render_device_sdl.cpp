@@ -259,12 +259,12 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 	}
 
 	// upload vertex uniforms
-	// if (!shader.vertex().uniforms.empty())
-	// 	SDL_PushGPUVertexUniformData(m_cmd_render, 0, (const void*)mat.vertex_data(), shader.vertex().uniform_buffer_size());
-	//
-	// // upload fragment uniforms
-	// if (!shader.fragment().uniforms.empty())
-	// 	SDL_PushGPUFragmentUniformData(m_cmd_render, 0, (const void*)mat.fragment_data(), shader.fragment().uniform_buffer_size());
+	if (!shader.vertex().uniforms.empty())
+		SDL_PushGPUVertexUniformData(m_cmd_render, 0, (const void*)mat.vertex_data(), shader.vertex().uniform_buffer_size());
+
+	// upload fragment uniforms
+	if (!shader.fragment().uniforms.empty())
+		SDL_PushGPUFragmentUniformData(m_cmd_render, 0, (const void*)mat.fragment_data(), shader.fragment().uniform_buffer_size());
 
 	// perform draw
 	SDL_DrawGPUPrimitives(m_render_pass, 3, 1, 0, 0);
