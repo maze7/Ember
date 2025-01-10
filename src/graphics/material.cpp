@@ -7,9 +7,6 @@ Material::Material(Shader &shader) : m_shader(shader) {
 }
 
 void Material::set_shader(Shader &shader) {
-	if (&m_shader == &shader)
-		return;
-
 	m_shader = shader;
 	m_vertex_uniform_buffer.resize(m_shader.vertex().uniform_buffer_size());
 	m_fragment_uniform_buffer.resize(m_shader.fragment().uniform_buffer_size());
