@@ -30,6 +30,12 @@ void RenderDeviceSDL::init(Window* window) {
 	m_gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, true, nullptr);
 	SDL_ClaimWindowForGPUDevice(m_gpu, m_window->native_handle());
 
+	// set present mode depending on what is available
+	if (SDL_WindowSupportsGPUPresentMode(m_gpu, m_window->native_handle(), SDL_GPU_PRESENTMODE_IMMEDIATE)) {
+		SDL_SetGPUSwapchainParameters(m_gpu, m_window->native_handle(), SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_IMMEDIATE);
+		Log::info("Set SDL_GPU_PRESENTMODE_IMMEDIATE");
+	}
+
 	// init command buffers
 	reset_command_buffers();
 
@@ -69,8 +75,11 @@ void RenderDeviceSDL::destroy() {
 		destroy_texture(texture);
 
 	for (auto& m_fence : m_fences) {
-		SDL_ReleaseGPUFence(m_gpu, m_fence[0]);
-		SDL_ReleaseGPUFence(m_gpu, m_fence[1]);
+		if (m_fence[0])
+			SDL_ReleaseGPUFence(m_gpu, m_fence[0]);
+
+		if (m_fence[1])
+			SDL_ReleaseGPUFence(m_gpu, m_fence[1]);
 	}
 
 	// destroy transfer buffers
@@ -355,11 +364,26 @@ void RenderDeviceSDL::present() {
 	end_copy_pass();
 	end_render_pass();
 
-	// Wait for the least-recent fence
-	if (m_fences[m_frame][0] || m_fences[m_frame][1]) {
-		SDL_WaitForGPUFences(m_gpu, true, m_fences[m_frame], 2);
-		SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][0]);
-		SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][1]);
+	SDL_GPUFence* fences[2];
+	u32 fence_count = 0;
+
+	if (m_fences[m_frame][0] != nullptr) {
+		fences[fence_count++] = m_fences[m_frame][0];
+	}
+	if (m_fences[m_frame][1] != nullptr) {
+		fences[fence_count++] = m_fences[m_frame][1];
+	}
+
+	// wait if there are any fences to wait on
+	if (fence_count > 0) {
+		if (fence_count != 2) {
+			Log::error("Fence count: {}", fence_count);
+		}
+
+		SDL_WaitForGPUFences(m_gpu, true, fences, fence_count);
+		for (int i = 0; i < fence_count; i++) {
+			SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][i]);
+		}
 	}
 
 	// if swapchain can be acquired, blit framebuffer to it
@@ -409,18 +433,25 @@ void RenderDeviceSDL::present() {
 		}
 	}
 
-	// flush commands from this frame
-	{
-		end_copy_pass();
-		end_render_pass();
-		m_fences[m_frame][0] = SDL_SubmitGPUCommandBufferAndAcquireFence(m_cmd_transfer);
-		m_fences[m_frame][1] = SDL_SubmitGPUCommandBufferAndAcquireFence(m_cmd_render);
-		m_cmd_transfer = nullptr;
-		m_cmd_render = nullptr;
-		reset_command_buffers();
+	flush_commands_and_acquire_fences();
+	m_frame = (m_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+void RenderDeviceSDL::flush_commands_and_acquire_fences() {
+	end_copy_pass();
+	end_render_pass();
+
+	m_fences[m_frame][0] = SDL_SubmitGPUCommandBufferAndAcquireFence(m_cmd_transfer);
+	m_fences[m_frame][1] = SDL_SubmitGPUCommandBufferAndAcquireFence(m_cmd_render);
+	if (!m_fences[m_frame][0]) {
+		Log::warn("Unable to acquire upload fence: {}", SDL_GetError());
+	} else if (!m_fences[m_frame][1]) {
+		Log::warn("Unable to acquire render fence: {}", SDL_GetError());
 	}
 
-	m_frame = (m_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+	m_cmd_transfer = nullptr;
+	m_cmd_render = nullptr;
+	reset_command_buffers();
 }
 
 Handle<ShaderResource> RenderDeviceSDL::create_shader(const ShaderDef& def) {

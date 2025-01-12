@@ -66,6 +66,7 @@ namespace Ember
 
 		void reset_command_buffers();
 		void flush_commands();
+		void flush_commands_and_acquire_fences();
 		void begin_copy_pass();
 		void end_copy_pass();
 		bool begin_render_pass(ClearInfo clear, Target* target = nullptr);
@@ -73,7 +74,10 @@ namespace Ember
 		SDL_GPUGraphicsPipeline* get_pso(DrawCommand cmd);
 
 		u32 m_frame = 0;
-		SDL_GPUFence* m_fences[MAX_FRAMES_IN_FLIGHT][2];
+		SDL_GPUFence* m_fences[MAX_FRAMES_IN_FLIGHT][2] = {
+			{ nullptr, nullptr },
+			{ nullptr, nullptr },
+		};
 
 		bool					m_initialized = false;
 		Window*					m_window = nullptr;
