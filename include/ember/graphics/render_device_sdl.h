@@ -31,6 +31,11 @@ namespace Ember
 		bool is_target_attachment;
 	};
 
+	struct MeshResourceSDL : MeshResource
+	{
+
+	};
+
 	class RenderDeviceSDL final : public RenderDevice
 	{
 	public:
@@ -55,6 +60,9 @@ namespace Ember
 
 		Handle<TargetResource> create_target(u32 width, u32 height) override;
 		void destroy_target(Handle<TargetResource> handle) override;
+
+		Handle<MeshResource> create_mesh() override;
+		void destroy_mesh(Handle<MeshResource> handle) override;
 
 	private:
 		struct ClearInfo
@@ -86,6 +94,7 @@ namespace Ember
 		Pool<ShaderResourceSDL, ShaderResource>		m_shaders;
 		Pool<TextureResourceSDL, TextureResource>	m_textures;
 		Pool<TargetResource>						m_targets;
+		Pool<MeshResourceSDL, MeshResource>			m_meshes;
 
 		Handle<TextureResource>	m_default_texture{};
 		std::unique_ptr<Target>	m_framebuffer{};

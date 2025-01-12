@@ -21,6 +21,7 @@ namespace Ember
 	struct ShaderResource {};
 	struct TextureResource {};
 	struct TargetResource {};
+	struct MeshResource {};
 	struct DrawCommand;
 	class Target;
 
@@ -48,6 +49,10 @@ namespace Ember
 		// render target resources
 		virtual Handle<TargetResource> create_target(u32 width, u32 height) = 0;
 		virtual void destroy_target(Handle<TargetResource> handle) = 0;
+
+		// mesh resources
+		virtual Handle<MeshResource> create_mesh() = 0;
+		virtual void destroy_mesh(Handle<MeshResource> handle) = 0;
 	};
 
 	extern RenderDevice* render_device;

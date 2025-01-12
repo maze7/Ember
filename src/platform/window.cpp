@@ -1,5 +1,6 @@
 #include "platform/window.h"
 #include "SDL3/SDL.h"
+#include <vector>
 
 using namespace Ember;
 

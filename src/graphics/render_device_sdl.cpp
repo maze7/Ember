@@ -427,6 +427,7 @@ void RenderDeviceSDL::flush_commands_and_acquire_fences() {
 
 	m_fences[m_frame][0] = SDL_SubmitGPUCommandBufferAndAcquireFence(m_cmd_transfer);
 	m_fences[m_frame][1] = SDL_SubmitGPUCommandBufferAndAcquireFence(m_cmd_render);
+
 	if (!m_fences[m_frame][0]) {
 		Log::warn("Unable to acquire upload fence: {}", SDL_GetError());
 	} else if (!m_fences[m_frame][1]) {
@@ -520,4 +521,12 @@ void RenderDeviceSDL::destroy_target(Handle<TargetResource> handle) {
 	if (auto target = m_targets.get(handle)) {
 		m_targets.erase(handle);
 	}
+}
+
+Handle<MeshResource> RenderDeviceSDL::create_mesh() {
+	return {};
+}
+
+void RenderDeviceSDL::destroy_mesh(Handle<MeshResource> handle) {
+
 }

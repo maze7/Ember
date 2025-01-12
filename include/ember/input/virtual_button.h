@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "input.h"
 #include "keys.h"
 #include "buttons.h"
