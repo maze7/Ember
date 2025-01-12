@@ -33,7 +33,6 @@ void RenderDeviceSDL::init(Window* window) {
 	// set present mode depending on what is available
 	if (SDL_WindowSupportsGPUPresentMode(m_gpu, m_window->native_handle(), SDL_GPU_PRESENTMODE_IMMEDIATE)) {
 		SDL_SetGPUSwapchainParameters(m_gpu, m_window->native_handle(), SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_IMMEDIATE);
-		Log::info("Set SDL_GPU_PRESENTMODE_IMMEDIATE");
 	}
 
 	// init command buffers
@@ -364,26 +363,11 @@ void RenderDeviceSDL::present() {
 	end_copy_pass();
 	end_render_pass();
 
-	SDL_GPUFence* fences[2];
-	u32 fence_count = 0;
-
-	if (m_fences[m_frame][0] != nullptr) {
-		fences[fence_count++] = m_fences[m_frame][0];
-	}
-	if (m_fences[m_frame][1] != nullptr) {
-		fences[fence_count++] = m_fences[m_frame][1];
-	}
-
-	// wait if there are any fences to wait on
-	if (fence_count > 0) {
-		if (fence_count != 2) {
-			Log::error("Fence count: {}", fence_count);
-		}
-
-		SDL_WaitForGPUFences(m_gpu, true, fences, fence_count);
-		for (int i = 0; i < fence_count; i++) {
-			SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][i]);
-		}
+	// wait for fences for the current frame to complete
+	if (m_fences[m_frame][0] || m_fences[m_frame][1]) {
+		SDL_WaitForGPUFences(m_gpu, true, m_fences[m_frame], 2);
+		SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][0]);
+		SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][1]);
 	}
 
 	// if swapchain can be acquired, blit framebuffer to it
