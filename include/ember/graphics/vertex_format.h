@@ -17,7 +17,7 @@ namespace Ember
 
 		template <class T>
 		static VertexFormat create(std::span<Element> elements) {
-			return {
+			return VertexFormat{
 				.elements = elements,
 				.stride = sizeof(T)
 			};

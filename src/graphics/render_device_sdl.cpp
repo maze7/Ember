@@ -524,9 +524,13 @@ void RenderDeviceSDL::destroy_target(Handle<TargetResource> handle) {
 }
 
 Handle<MeshResource> RenderDeviceSDL::create_mesh() {
-	return {};
+	EMBER_ASSERT(m_initialized);
+	return m_meshes.emplace();
 }
 
 void RenderDeviceSDL::destroy_mesh(Handle<MeshResource> handle) {
-
+	if (auto mesh = m_meshes.get(handle)) {
+		Log::trace("Destroying mesh: [slot: {}, gen: {}]", handle.slot, handle.gen);
+		m_meshes.erase(handle);
+	}
 }

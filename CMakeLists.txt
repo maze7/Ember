@@ -67,6 +67,7 @@ add_library(
         include/ember/graphics/mesh.h
         include/ember/graphics/vertex_format.h
         include/ember/graphics/index_format.h
+        src/graphics/mesh.cpp
 )
 
 # add include directories to Ember library
