@@ -449,7 +449,7 @@ Handle<ShaderResource> RenderDeviceSDL::create_shader(const ShaderDef& def) {
 		.format = SDL_GPU_SHADERFORMAT_SPIRV,
 		.stage = SDL_GPU_SHADERSTAGE_VERTEX,
 		.num_samplers = def.vertex.num_samplers,
-		.num_uniform_buffers = (u32)(def.vertex.uniforms.size() > 0 ? 1 : 0),
+		.num_uniform_buffers = (u32)(def.vertex.uniforms.empty() ? 0 : 1),
 	};
 
 	SDL_GPUShaderCreateInfo fragment_create_info = {
@@ -459,7 +459,7 @@ Handle<ShaderResource> RenderDeviceSDL::create_shader(const ShaderDef& def) {
 		.format = SDL_GPU_SHADERFORMAT_SPIRV,
 		.stage = SDL_GPU_SHADERSTAGE_FRAGMENT,
 		.num_samplers = def.fragment.num_samplers,
-		.num_uniform_buffers = (u32)(def.fragment.uniforms.size() > 0 ? 1 : 0),
+		.num_uniform_buffers = (u32)(def.fragment.uniforms.empty() ? 0 : 1),
 	};
 
 	// compile shaders & add to shader pool
