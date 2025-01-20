@@ -44,8 +44,8 @@ void RenderDeviceSDL::init(Window* window) {
 		.size = 16 * 1024 * 1024, // 16mb
 		.props = 0,
 	};
-	m_texture_transfer_buffer = SDL_CreateGPUTransferBuffer(m_gpu, &info);
-	m_buffer_transfer_buffer = SDL_CreateGPUTransferBuffer(m_gpu, &info);
+	m_texture_upload_buffer = SDL_CreateGPUTransferBuffer(m_gpu, &info);
+	m_buffer_upload_buffer = SDL_CreateGPUTransferBuffer(m_gpu, &info);
 	m_initialized = true;
 
 	// create default texture
@@ -82,8 +82,8 @@ void RenderDeviceSDL::destroy() {
 	}
 
 	// destroy transfer buffers
-	SDL_ReleaseGPUTransferBuffer(m_gpu, m_texture_transfer_buffer);
-	SDL_ReleaseGPUTransferBuffer(m_gpu, m_buffer_transfer_buffer);
+	SDL_ReleaseGPUTransferBuffer(m_gpu, m_texture_upload_buffer);
+	SDL_ReleaseGPUTransferBuffer(m_gpu, m_buffer_upload_buffer);
 
 	SDL_ReleaseWindowFromGPUDevice(m_gpu, m_window->native_handle());
 	SDL_DestroyGPUDevice(m_gpu);
@@ -104,10 +104,10 @@ void RenderDeviceSDL::reset_command_buffers() {
 	m_cmd_render = SDL_AcquireGPUCommandBuffer(m_gpu);
 	m_cmd_transfer = SDL_AcquireGPUCommandBuffer(m_gpu);
 
-	m_texture_transfer_buffer_offset = 0;
-	m_texture_transfer_buffer_cycle_count = 0;
-	m_buffer_transfer_buffer_offset = 0;
-	m_buffer_transfer_buffer_offset = 0;
+	m_texture_upload_buffer_offset = 0;
+	m_texture_upload_buffer_cycle_count = 0;
+	m_buffer_upload_buffer_offset = 0;
+	m_buffer_upload_buffer_offset = 0;
 }
 
 void RenderDeviceSDL::flush_commands() {
@@ -531,6 +531,136 @@ Handle<MeshResource> RenderDeviceSDL::create_mesh() {
 void RenderDeviceSDL::destroy_mesh(Handle<MeshResource> handle) {
 	if (auto mesh = m_meshes.get(handle)) {
 		Log::trace("Destroying mesh: [slot: {}, gen: {}]", handle.slot, handle.gen);
+
+		static auto destroy_mesh_buffer = [&](MeshResourceSDL::Buffer& buffer) {
+			if (buffer.handle != nullptr) {
+				SDL_ReleaseGPUBuffer(m_gpu, buffer.handle);
+			}
+			buffer.handle = nullptr;
+		};
+
+		destroy_mesh_buffer(mesh->index);
+		destroy_mesh_buffer(mesh->vertex);
+		destroy_mesh_buffer(mesh->instance);
 		m_meshes.erase(handle);
 	}
 }
+
+void RenderDeviceSDL::set_mesh_vertex_data(Handle<MeshResource> handle, void *data, int data_size, int data_dst_offset) {
+	EMBER_ASSERT(m_initialized);
+
+	if (auto mesh = m_meshes.get(handle)) {
+		mesh->vertex.dirty = true;
+		upload_mesh_buffer(mesh->vertex, data, data_size, data_dst_offset, SDL_GPU_BUFFERUSAGE_VERTEX);
+	} else {
+		Log::error("Tried set vertex data on invalid mesh!");
+	}
+}
+
+void RenderDeviceSDL::set_mesh_index_data(Handle<MeshResource> handle, void *data, int data_size, int data_dst_offset) {
+	EMBER_ASSERT(m_initialized);
+
+	if (auto mesh = m_meshes.get(handle)) {
+		mesh->index.dirty = true;
+		upload_mesh_buffer(mesh->index, data, data_size, data_dst_offset, SDL_GPU_BUFFERUSAGE_INDEX);
+	} else {
+		Log::error("Tried to set index data on invalid mesh!");
+	}
+}
+
+void RenderDeviceSDL::upload_mesh_buffer(MeshResourceSDL::Buffer& buf, void *data, int data_size, int data_dst_offset, SDL_GPUBufferUsageFlags usage) {
+	// (re)create buffer if needed
+	u32 required = data_size + data_dst_offset;
+	if (required > buf.capacity || buf.handle == nullptr) {
+		// TODO: A resize wipes all contents, not particularly ideal
+		if (buf.handle != nullptr) {
+			SDL_ReleaseGPUBuffer(m_gpu, buf.handle);
+			buf.handle = nullptr;
+		}
+
+		// TODO: Upon first creation we should probably just create a perfectly sized buffer, and afterward resize to next Po2
+		u32 size;
+		if (buf.capacity == 0) {
+			size = Math::max((u32) 8, required); // never create a buffer that has 0 length
+		} else {
+			size = 8;
+			while (size < required)
+				size *= 2;
+		}
+
+		SDL_GPUBufferCreateInfo info = {
+			.usage = usage,
+			.size = size,
+			.props = 0,
+		};
+
+		buf.handle = SDL_CreateGPUBuffer(m_gpu, &info);
+
+		if (buf.handle == nullptr) {
+			throw Exception("Mesh Creation Failed");
+		}
+		buf.capacity = size;
+	}
+
+	// early exit if there's no data to upload at this time
+	if (data == nullptr)
+		return;
+
+	bool cycle = true; // TODO: This is controlled by hints/logic in FNA3D, where it can lead to a potential flush
+	bool upload_cycle = m_buffer_upload_buffer_offset == 0;
+	bool use_temp_upload_buffer = false;
+	SDL_GPUTransferBuffer* upload_buffer = m_buffer_upload_buffer;
+	u32 upload_offset = m_buffer_upload_buffer_offset;
+
+	// acquire transfer buffer
+	if (data_size >= UPLOAD_BUFFER_SIZE) {
+		SDL_GPUTransferBufferCreateInfo info = {
+			.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+			.size = (u32) data_size,
+			.props = 0,
+		};
+		upload_buffer = SDL_CreateGPUTransferBuffer(m_gpu, &info);
+		use_temp_upload_buffer = true;
+		upload_offset = 0;
+	} else if (m_buffer_upload_buffer_offset + data_size >= UPLOAD_BUFFER_SIZE) {
+		if (m_buffer_upload_buffer_cycle_count < MAX_UPLOAD_CYCLE_COUNT) {
+			upload_cycle = true;
+			m_buffer_upload_buffer_cycle_count++;
+			m_buffer_upload_buffer_offset = 0;
+			upload_offset = 0;
+		}
+	}
+
+	// copy data
+	{
+		void* dst = SDL_MapGPUTransferBuffer(m_gpu, upload_buffer, upload_cycle) + upload_offset;
+		memcpy(dst, data, data_size);
+		SDL_UnmapGPUTransferBuffer(m_gpu, upload_buffer);
+	}
+
+	// submit to the GPU
+	{
+		begin_copy_pass();
+
+		SDL_GPUTransferBufferLocation location = {
+			.offset = upload_offset,
+			.transfer_buffer = upload_buffer,
+		};
+
+		SDL_GPUBufferRegion region = {
+			.buffer = buf.handle,
+			.offset = (u32) data_dst_offset,
+			.size = (u32) data_size,
+		};
+
+		SDL_UploadToGPUBuffer(m_copy_pass, &location, &region, cycle);
+	}
+
+	// transfer buffer management
+	if (use_temp_upload_buffer) {
+		SDL_ReleaseGPUTransferBuffer(m_gpu, upload_buffer);
+	} else {
+		m_buffer_upload_buffer_offset += (u32) data_size;
+	}
+}
+

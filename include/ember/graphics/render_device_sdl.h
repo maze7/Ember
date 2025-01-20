@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include "vertex_format.h"
 #include "graphics/render_device.h"
 #include "graphics/texture_format.h"
 #include "graphics/target.h"
@@ -11,6 +12,8 @@
 
 namespace Ember
 {
+	enum class IndexFormat;
+
 	struct ShaderResourceSDL : ShaderResource
 	{
 		ShaderResourceSDL(SDL_GPUShader* v, SDL_GPUShader* f) : vertex(v), fragment(f) {}
@@ -33,7 +36,18 @@ namespace Ember
 
 	struct MeshResourceSDL : MeshResource
 	{
+		struct Buffer
+		{
+			SDL_GPUBuffer* handle = nullptr;
+			u32 capacity = 0;
+			bool dirty = false;
+		};
 
+		Buffer index;
+		Buffer vertex;
+		Buffer instance;
+		IndexFormat index_format;
+		VertexFormat vertex_format;
 	};
 
 	class RenderDeviceSDL final : public RenderDevice
@@ -63,8 +77,13 @@ namespace Ember
 
 		Handle<MeshResource> create_mesh() override;
 		void destroy_mesh(Handle<MeshResource> handle) override;
+		void set_mesh_vertex_data(Handle<MeshResource> handle, void* data, int data_size, int data_dst_offset) override;
+		void set_mesh_index_data(Handle<MeshResource> handle, void* data, int data_size, int data_dst_offset) override;
 
 	private:
+		static constexpr u32 UPLOAD_BUFFER_SIZE = 16 * 1024 * 1024; // 16mb
+		static constexpr u32 MAX_UPLOAD_CYCLE_COUNT = 4;
+
 		struct ClearInfo
 		{
 			std::optional<Color> color;
@@ -79,6 +98,7 @@ namespace Ember
 		void end_copy_pass();
 		bool begin_render_pass(ClearInfo clear, Target* target = nullptr);
 		void end_render_pass();
+		void upload_mesh_buffer(MeshResourceSDL::Buffer& buf, void* data, int data_size, int data_dst_offset, SDL_GPUBufferUsageFlags usage);
 		SDL_GPUGraphicsPipeline* get_pso(DrawCommand cmd);
 
 		u32 m_frame = 0;
@@ -98,8 +118,8 @@ namespace Ember
 
 		Handle<TextureResource>	m_default_texture{};
 		std::unique_ptr<Target>	m_framebuffer{};
-		SDL_GPUTransferBuffer*  m_texture_transfer_buffer = nullptr;
-		SDL_GPUTransferBuffer*  m_buffer_transfer_buffer = nullptr;
+		SDL_GPUTransferBuffer*  m_texture_upload_buffer = nullptr;
+		SDL_GPUTransferBuffer*  m_buffer_upload_buffer = nullptr;
 		SDL_GPUCommandBuffer*   m_cmd_render = nullptr;
 		SDL_GPUCommandBuffer*	m_cmd_transfer = nullptr;
 		SDL_GPUCopyPass*		m_copy_pass = nullptr;
@@ -110,9 +130,9 @@ namespace Ember
 		std::unordered_map<Handle<ShaderResource>, std::vector<SDL_GPUGraphicsPipeline*>> m_pso_shaders;
 		SDL_GPUGraphicsPipeline* m_render_pass_pso = nullptr;
 
-		u32 m_texture_transfer_buffer_offset = 0;
-		u32 m_texture_transfer_buffer_cycle_count = 0;
-		u32 m_buffer_transfer_buffer_offset = 0;
-		u32 m_buffer_transfer_buffer_cycle_count = 0;
+		u32 m_texture_upload_buffer_offset = 0;
+		u32 m_texture_upload_buffer_cycle_count = 0;
+		u32 m_buffer_upload_buffer_offset = 0;
+		u32 m_buffer_upload_buffer_cycle_count = 0;
 	};
 }

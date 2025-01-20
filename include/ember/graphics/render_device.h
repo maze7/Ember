@@ -53,6 +53,8 @@ namespace Ember
 		// mesh resources
 		virtual Handle<MeshResource> create_mesh() = 0;
 		virtual void destroy_mesh(Handle<MeshResource> handle) = 0;
+		virtual void set_mesh_vertex_data(Handle<MeshResource> handle, void* data, int data_size, int data_dst_offset) = 0;
+		virtual void set_mesh_index_data(Handle<MeshResource> handle, void* data, int data_size, int data_dst_offset) = 0;
 	};
 
 	extern RenderDevice* render_device;
