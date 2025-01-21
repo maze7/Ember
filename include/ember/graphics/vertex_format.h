@@ -15,6 +15,8 @@ namespace Ember
 			bool normalized = true;
 		};
 
+		VertexFormat() = default;
+
 		template <class T>
 		static VertexFormat create(std::span<Element> elements) {
 			return VertexFormat{

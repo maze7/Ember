@@ -643,8 +643,8 @@ void RenderDeviceSDL::upload_mesh_buffer(MeshResourceSDL::Buffer& buf, void *dat
 		begin_copy_pass();
 
 		SDL_GPUTransferBufferLocation location = {
-			.offset = upload_offset,
 			.transfer_buffer = upload_buffer,
+			.offset = upload_offset,
 		};
 
 		SDL_GPUBufferRegion region = {

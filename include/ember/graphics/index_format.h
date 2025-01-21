@@ -22,4 +22,19 @@ namespace Ember
 			}
 		}
 	};
+
+	template <class TIndex>
+	IndexFormat index_format();
+
+	// specialisation for 16-bit types
+	template <>
+	inline IndexFormat index_format<u16>() {
+		return IndexFormat::Sixteen;
+	}
+
+	// specialisation for 32-bit types
+	template <>
+	inline IndexFormat index_format<u32>() {
+		return IndexFormat::ThirtyTwo;
+	}
 }
