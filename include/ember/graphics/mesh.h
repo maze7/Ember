@@ -16,8 +16,11 @@ namespace Ember
 		VoidMesh(VertexFormat vertex_format, IndexFormat index_format);
 		~VoidMesh();
 
-		void set_vertices(void* data, int count, int offset = 0);
-		void set_indices(void* data, int count, int offset = 0);
+		void set_vertices(const void* data, int count, int offset = 0);
+		void set_indices(const void* data, int count, int offset = 0);
+		auto resource() const { return m_resource; }
+		auto vertex_format() const { return m_vertex_format; }
+		auto index_format() const { return m_index_format; }
 
 	private:
 		Handle<MeshResource> m_resource = Handle<MeshResource>::null;
@@ -40,7 +43,7 @@ namespace Ember
 	{
 	public:
 		// Construct by deriving the correct vertex & index formats
-		Mesh() : VoidMesh(TVertex::format(), index_format<TIndex>()) {}
+		Mesh() : VoidMesh(TVertex::format(), index_format_from_type<TIndex>()) {}
 
 		void set_vertices(std::span<const TVertex> data, int offset = 0) {
 			VoidMesh::set_vertices(data.data(), data.size(), offset);

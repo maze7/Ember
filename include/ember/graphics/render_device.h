@@ -1,6 +1,8 @@
 #pragma once
 
 #include "color.h"
+#include "index_format.h"
+#include "vertex_format.h"
 #include "graphics/texture_format.h"
 #include "platform/window.h"
 #include "core/common.h"
@@ -51,10 +53,10 @@ namespace Ember
 		virtual void destroy_target(Handle<TargetResource> handle) = 0;
 
 		// mesh resources
-		virtual Handle<MeshResource> create_mesh() = 0;
+		virtual Handle<MeshResource> create_mesh(VertexFormat vertex_format, IndexFormat index_format) = 0;
 		virtual void destroy_mesh(Handle<MeshResource> handle) = 0;
-		virtual void set_mesh_vertex_data(Handle<MeshResource> handle, void* data, int data_size, int data_dst_offset) = 0;
-		virtual void set_mesh_index_data(Handle<MeshResource> handle, void* data, int data_size, int data_dst_offset) = 0;
+		virtual void set_mesh_vertex_data(Handle<MeshResource> handle, const void* data, int data_size, int data_dst_offset) = 0;
+		virtual void set_mesh_index_data(Handle<MeshResource> handle, const void* data, int data_size, int data_dst_offset) = 0;
 	};
 
 	extern RenderDevice* render_device;

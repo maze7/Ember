@@ -43,13 +43,14 @@ namespace Ember
 			bool dirty = false;
 		};
 
-		MeshResourceSDL() = default;
+		MeshResourceSDL(VertexFormat v_format, IndexFormat i_format)
+			: vertex_format(v_format), index_format(i_format) {}
 
 		Buffer index;
 		Buffer vertex;
 		Buffer instance;
-		IndexFormat index_format;
 		VertexFormat vertex_format;
+		IndexFormat index_format;
 	};
 
 	class RenderDeviceSDL final : public RenderDevice
@@ -77,10 +78,10 @@ namespace Ember
 		Handle<TargetResource> create_target(u32 width, u32 height) override;
 		void destroy_target(Handle<TargetResource> handle) override;
 
-		Handle<MeshResource> create_mesh() override;
+		Handle<MeshResource> create_mesh(VertexFormat vertex_format, IndexFormat index_format) override;
 		void destroy_mesh(Handle<MeshResource> handle) override;
-		void set_mesh_vertex_data(Handle<MeshResource> handle, void* data, int data_size, int data_dst_offset) override;
-		void set_mesh_index_data(Handle<MeshResource> handle, void* data, int data_size, int data_dst_offset) override;
+		void set_mesh_vertex_data(Handle<MeshResource> handle, const void* data, int data_size, int data_dst_offset) override;
+		void set_mesh_index_data(Handle<MeshResource> handle, const void* data, int data_size, int data_dst_offset) override;
 
 	private:
 		static constexpr u32 UPLOAD_BUFFER_SIZE = 16 * 1024 * 1024; // 16mb
@@ -100,7 +101,7 @@ namespace Ember
 		void end_copy_pass();
 		bool begin_render_pass(ClearInfo clear, Target* target = nullptr);
 		void end_render_pass();
-		void upload_mesh_buffer(MeshResourceSDL::Buffer& buf, void* data, int data_size, int data_dst_offset, SDL_GPUBufferUsageFlags usage);
+		void upload_mesh_buffer(MeshResourceSDL::Buffer& buf, const void* data, int data_size, int data_dst_offset, SDL_GPUBufferUsageFlags usage);
 		SDL_GPUGraphicsPipeline* get_pso(DrawCommand cmd);
 
 		u32 m_frame = 0;
@@ -127,6 +128,7 @@ namespace Ember
 		SDL_GPUCopyPass*		m_copy_pass = nullptr;
 		SDL_GPURenderPass*		m_render_pass = nullptr;
 		Target*					m_render_pass_target = nullptr;
+		MeshResourceSDL*		m_render_pass_mesh = nullptr;
 
 		std::unordered_map<u64, SDL_GPUGraphicsPipeline*> m_pso_cache;
 		std::unordered_map<Handle<ShaderResource>, std::vector<SDL_GPUGraphicsPipeline*>> m_pso_shaders;

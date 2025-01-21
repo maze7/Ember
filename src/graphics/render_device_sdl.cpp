@@ -21,6 +21,44 @@ namespace
 				throw Exception("Unknown texture format");
 		}
 	}
+
+	constexpr auto to_sdl_index_format = [](IndexFormat format) {
+		switch (format) {
+			case IndexFormat::Sixteen:
+				return SDL_GPU_INDEXELEMENTSIZE_16BIT;
+			case IndexFormat::ThirtyTwo:
+				return SDL_GPU_INDEXELEMENTSIZE_32BIT;
+			default:
+				throw Exception("Unknown index format");
+		}
+	};
+
+	constexpr auto to_sdl_vertex_format = [](VertexType type, bool normalized) {
+		switch (type) {
+			case VertexType::Float:
+				return SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
+			case VertexType::Float2:
+				return SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
+			case VertexType::Float3:
+				return SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
+			case VertexType::Float4:
+				return SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
+			case VertexType::Byte4:
+				return normalized ? SDL_GPU_VERTEXELEMENTFORMAT_BYTE4_NORM : SDL_GPU_VERTEXELEMENTFORMAT_BYTE4;
+			case VertexType::UByte4:
+				return normalized ? SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM : SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4;
+			case VertexType::Short2:
+				return normalized ? SDL_GPU_VERTEXELEMENTFORMAT_BYTE2_NORM : SDL_GPU_VERTEXELEMENTFORMAT_BYTE2;
+			case VertexType::UShort2:
+				return normalized ? SDL_GPU_VERTEXELEMENTFORMAT_UBYTE2_NORM : SDL_GPU_VERTEXELEMENTFORMAT_UBYTE2;
+			case VertexType::Short4:
+				return normalized ? SDL_GPU_VERTEXELEMENTFORMAT_SHORT4_NORM : SDL_GPU_VERTEXELEMENTFORMAT_SHORT4;
+			case VertexType::UShort4:
+				return normalized ? SDL_GPU_VERTEXELEMENTFORMAT_USHORT4_NORM : SDL_GPU_VERTEXELEMENTFORMAT_USHORT4;
+			default:
+				throw Exception("Unknown vertex type");
+		}
+	};
 }
 
 void RenderDeviceSDL::init(Window* window) {
@@ -216,7 +254,7 @@ void RenderDeviceSDL::end_render_pass() {
 	m_render_pass = nullptr;
 	m_render_pass_target = nullptr;
 	m_render_pass_pso = nullptr;
-	// m_render_pass_mesh = nullptr;
+	m_render_pass_mesh = nullptr;
 	// m_render_pass_viewport = nullptr;
 	// m_render_pass_scissor = nullptr;
 }
@@ -233,12 +271,16 @@ void RenderDeviceSDL::clear(Color color, float depth, int stencil, ClearMask mas
 	}
 }
 
+
+
+
 void RenderDeviceSDL::draw(DrawCommand cmd) {
 	EMBER_ASSERT(m_initialized);
 
 	auto& mat = cmd.material;
 	auto& shader = mat.shader();
 	auto  target = cmd.target;
+	auto  mesh = cmd.mesh;
 
 	if (!begin_render_pass(ClearInfo(), target))
 		return;
@@ -266,6 +308,31 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 		m_render_pass_pso = pso;
 	}
 
+	// bind mesh buffers
+	auto mesh_resource = m_meshes.get(mesh->resource());
+	EMBER_ASSERT(mesh_resource != nullptr);
+
+	if (m_render_pass_mesh != mesh_resource || mesh_resource->vertex.dirty || mesh_resource->index.dirty || mesh_resource->instance.dirty) {
+		m_render_pass_mesh = mesh_resource;
+		mesh_resource->vertex.dirty = false;
+		mesh_resource->index.dirty = false;
+		mesh_resource->instance.dirty = false;
+
+		// bind index buffer
+		SDL_GPUBufferBinding index_binding = {
+			.buffer = mesh_resource->index.handle,
+			.offset = 0
+		};
+		SDL_BindGPUIndexBuffer(m_render_pass, &index_binding, to_sdl_index_format(mesh_resource->index_format));
+
+		// bind vertex buffer
+		SDL_GPUBufferBinding vertex_binding = {
+			.buffer = mesh_resource->vertex.handle,
+			.offset = 0
+		};
+		SDL_BindGPUVertexBuffers(m_render_pass, 0, &vertex_binding, 1);
+	}
+
 	// upload vertex uniforms
 	if (!shader.vertex().uniforms.empty())
 		SDL_PushGPUVertexUniformData(m_cmd_render, 0, (const void*)mat.vertex_data(), shader.vertex().uniform_buffer_size());
@@ -275,7 +342,7 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 		SDL_PushGPUFragmentUniformData(m_cmd_render, 0, (const void*)mat.fragment_data(), shader.fragment().uniform_buffer_size());
 
 	// perform draw
-	SDL_DrawGPUPrimitives(m_render_pass, 3, 1, 0, 0);
+	SDL_DrawGPUIndexedPrimitives(m_render_pass, cmd.mesh_index_count, 1, cmd.mesh_index_start, cmd.mesh_vertex_offset, 0);
 }
 
 SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
@@ -283,7 +350,8 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 
 	auto hash = combined_hash(
 		cmd.target,
-		cmd.material.shader().handle()
+		cmd.material.shader().handle(),
+		cmd.mesh->resource()
 	);
 
 	if (!cmd.target)
@@ -292,6 +360,8 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 	auto& shader = cmd.material.shader();
 	auto shader_res = m_shaders.get(shader.handle());
 	auto target = cmd.target;
+	auto mesh = cmd.mesh;
+	auto vertex_format = mesh->vertex_format();
 	SDL_GPUGraphicsPipeline* pipeline = nullptr;
 
 	if (!m_pso_cache.contains(hash)) {
@@ -299,6 +369,9 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 		SDL_GPUColorTargetDescription color_attachments[4];
 		SDL_GPUColorTargetBlendState color_blend_state{};
 		u8 color_attachment_count = 0;
+		SDL_GPUVertexBufferDescription vertex_bindings[1];
+		SDL_GPUVertexAttribute vertex_attributes[vertex_format.elements.size()];
+		u32 vertex_offset = 0;
 
 		if (cmd.target) {
 			for (auto& t : cmd.target->attachments()) {
@@ -313,9 +386,33 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 			}
 		}
 
+		vertex_bindings[0] = {
+			.slot = 0,
+			.pitch = (u32) vertex_format.stride,
+			.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
+			.instance_step_rate = 0,
+		};
+
+		for (int i = 0; i < vertex_format.elements.size(); i++) {
+			auto& el = vertex_format.elements[i];
+			vertex_attributes[i] = {
+				.location = (u32) el.index,
+				.buffer_slot = 0,
+				.format = to_sdl_vertex_format(el.type, el.normalized),
+				.offset = (u32) vertex_offset
+			};
+			vertex_offset += VertexTypeExt::size(el.type);
+		}
+
 		SDL_GPUGraphicsPipelineCreateInfo info = {
 			.vertex_shader = shader_res->vertex,
 			.fragment_shader = shader_res->fragment,
+			.vertex_input_state = {
+				.vertex_buffer_descriptions = vertex_bindings,
+				.num_vertex_buffers = 1,
+				.vertex_attributes = vertex_attributes,
+				.num_vertex_attributes = (u32) vertex_format.elements.size(),
+			},
 			.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
 			.rasterizer_state = {
 				.fill_mode = SDL_GPU_FILLMODE_FILL,
@@ -523,9 +620,9 @@ void RenderDeviceSDL::destroy_target(Handle<TargetResource> handle) {
 	}
 }
 
-Handle<MeshResource> RenderDeviceSDL::create_mesh() {
+Handle<MeshResource> RenderDeviceSDL::create_mesh(VertexFormat vertex_format, IndexFormat index_format) {
 	EMBER_ASSERT(m_initialized);
-	return m_meshes.emplace();
+	return m_meshes.emplace(vertex_format, index_format);
 }
 
 void RenderDeviceSDL::destroy_mesh(Handle<MeshResource> handle) {
@@ -546,7 +643,7 @@ void RenderDeviceSDL::destroy_mesh(Handle<MeshResource> handle) {
 	}
 }
 
-void RenderDeviceSDL::set_mesh_vertex_data(Handle<MeshResource> handle, void *data, int data_size, int data_dst_offset) {
+void RenderDeviceSDL::set_mesh_vertex_data(Handle<MeshResource> handle, const void *data, int data_size, int data_dst_offset) {
 	EMBER_ASSERT(m_initialized);
 
 	if (auto mesh = m_meshes.get(handle)) {
@@ -557,7 +654,7 @@ void RenderDeviceSDL::set_mesh_vertex_data(Handle<MeshResource> handle, void *da
 	}
 }
 
-void RenderDeviceSDL::set_mesh_index_data(Handle<MeshResource> handle, void *data, int data_size, int data_dst_offset) {
+void RenderDeviceSDL::set_mesh_index_data(Handle<MeshResource> handle, const void *data, int data_size, int data_dst_offset) {
 	EMBER_ASSERT(m_initialized);
 
 	if (auto mesh = m_meshes.get(handle)) {
@@ -568,7 +665,7 @@ void RenderDeviceSDL::set_mesh_index_data(Handle<MeshResource> handle, void *dat
 	}
 }
 
-void RenderDeviceSDL::upload_mesh_buffer(MeshResourceSDL::Buffer& buf, void *data, int data_size, int data_dst_offset, SDL_GPUBufferUsageFlags usage) {
+void RenderDeviceSDL::upload_mesh_buffer(MeshResourceSDL::Buffer& buf, const void *data, int data_size, int data_dst_offset, SDL_GPUBufferUsageFlags usage) {
 	// (re)create buffer if needed
 	u32 required = data_size + data_dst_offset;
 	if (required > buf.capacity || buf.handle == nullptr) {
@@ -598,6 +695,8 @@ void RenderDeviceSDL::upload_mesh_buffer(MeshResourceSDL::Buffer& buf, void *dat
 
 		if (buf.handle == nullptr) {
 			throw Exception("Mesh Creation Failed");
+		} else {
+			Log::info("Buffer created: {}", size);
 		}
 		buf.capacity = size;
 	}

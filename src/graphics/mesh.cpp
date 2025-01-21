@@ -16,11 +16,11 @@ VoidMesh::~VoidMesh() {
 	}
 }
 
-void VoidMesh::set_vertices(void *data, int count, int offset) {
+void VoidMesh::set_vertices(const void *data, int count, int offset) {
 	m_vertex_count = count;
 
 	if (m_resource.is_null()) {
-		m_resource = render_device->create_mesh();
+		m_resource = render_device->create_mesh(m_vertex_format, m_index_format);
 	}
 
 	render_device->set_mesh_vertex_data(
@@ -31,11 +31,11 @@ void VoidMesh::set_vertices(void *data, int count, int offset) {
 	);
 }
 
-void VoidMesh::set_indices(void* data, int count, int offset) {
+void VoidMesh::set_indices(const void* data, int count, int offset) {
 	m_index_count = count;
 
 	if (m_resource.is_null()) {
-		m_resource = render_device->create_mesh();
+		m_resource = render_device->create_mesh(m_vertex_format, m_index_format);
 	}
 
 	render_device->set_mesh_index_data(

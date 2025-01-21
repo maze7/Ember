@@ -24,17 +24,16 @@ namespace Ember
 	};
 
 	template <class TIndex>
-	IndexFormat index_format();
+	IndexFormat index_format_from_type();
 
-	// specialisation for 16-bit types
 	template <>
-	inline IndexFormat index_format<u16>() {
+	inline IndexFormat index_format_from_type<u16>() {
 		return IndexFormat::Sixteen;
 	}
 
 	// specialisation for 32-bit types
 	template <>
-	inline IndexFormat index_format<u32>() {
+	inline IndexFormat index_format_from_type<u32>() {
 		return IndexFormat::ThirtyTwo;
 	}
 }
