@@ -33,6 +33,7 @@ namespace Ember
 		{ T::format() } -> std::same_as<VertexFormat>;
 	};
 
+	// Type-specialised Mesh class that wraps VoidMesh
 	template <VertexConcept TVertex, class TIndex>
 	class Mesh : public VoidMesh
 	{
