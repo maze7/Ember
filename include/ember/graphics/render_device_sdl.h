@@ -43,6 +43,8 @@ namespace Ember
 			bool dirty = false;
 		};
 
+		MeshResourceSDL() = default;
+
 		Buffer index;
 		Buffer vertex;
 		Buffer instance;
