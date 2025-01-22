@@ -1,7 +1,7 @@
 #pragma once
 
 #include "mouse_buttons.h"
-#include "math/vector2.h"
+#include "glm.hpp"
 
 namespace Ember
 {
@@ -12,9 +12,9 @@ namespace Ember
 	public:
 		static constexpr u32 MAX_MOUSE_BUTTONS = 8;
 
-		[[nodiscard]] Vector2f position() const { return m_position; }
-		[[nodiscard]] Vector2f screen_position() const { return m_screen_position; }
-		[[nodiscard]] Vector2f wheel() const { return m_wheel; }
+		[[nodiscard]] glm::vec2 position() const { return m_position; }
+		[[nodiscard]] glm::vec2 screen_position() const { return m_screen_position; }
+		[[nodiscard]] glm::vec2 wheel() const { return m_wheel; }
 
 		[[nodiscard]] bool down(MouseButton button) const;
 		[[nodiscard]] bool pressed(MouseButton button) const;
@@ -25,8 +25,8 @@ namespace Ember
 		friend class Input;
 
 		void on_button(MouseButton button, bool down);
-		void on_move(Vector2f position, Vector2f screen_position);
-		void on_wheel(Vector2f wheel);
+		void on_move(const glm::vec2& position, const glm::vec2& screen_position);
+		void on_wheel(const glm::vec2& wheel);
 		void reset();
 
 		// whether a button was pressed this frame
@@ -39,12 +39,12 @@ namespace Ember
 		bool m_released[MAX_MOUSE_BUTTONS];
 
 		// mouse position (screen coordinates)
-		Vector2f m_screen_position;
+		glm::vec2 m_screen_position;
 
 		// mouse position (window coordinates);
-		Vector2f m_position;
+		glm::vec2 m_position;
 
 		// mouse wheel value for current frame
-		Vector2f m_wheel;
+		glm::vec2 m_wheel;
 	};
 }

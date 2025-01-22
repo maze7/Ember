@@ -42,8 +42,8 @@ i32 Window::height() const {
 	return size().y;
 }
 
-Vector2i Window::size() const {
-	Vector2i size;
+glm::ivec2 Window::size() const {
+	glm::ivec2 size;
 	SDL_GetWindowSize(m_window, &size.x, &size.y);
 
 	return size;

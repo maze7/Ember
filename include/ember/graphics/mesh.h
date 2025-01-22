@@ -19,7 +19,7 @@ namespace Ember
 		void set_vertices(const void* data, int count, int offset = 0);
 		void set_indices(const void* data, int count, int offset = 0);
 		auto resource() const { return m_resource; }
-		auto vertex_format() const { return m_vertex_format; }
+		auto& vertex_format() const { return m_vertex_format; }
 		auto index_format() const { return m_index_format; }
 
 	private:

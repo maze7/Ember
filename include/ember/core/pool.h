@@ -1,198 +1,218 @@
 #pragma once
 
-#include <optional>
 #include <vector>
+#include <cstddef>
+#include <type_traits>
+#include <utility>
 
 #include "core/common.h"
 #include "core/handle.h"
 
-namespace Ember
-{
-	template<class T, class HandleType = T, int PoolSize = 256>
-	class Pool
-	{
-	public:
-		Pool() {
-			m_slots.resize(PoolSize);
-			build_freelist(0);
-		}
+namespace Ember {
 
-		template<class... Args>
-		Handle<HandleType> emplace(Args &&... args) {
-			u32 slot = m_slots[0].next;
-			m_slots[0].next = m_slots[slot].next;
+template<class T, class HandleType = T, int InitialPoolSize = 256>
+class Pool {
+public:
+    Pool() {
+        m_slots.reserve(InitialPoolSize);
+        m_slots.emplace_back(); // Slot 0 is reserved as the freelist head
+        build_freelist(1, InitialPoolSize);
+    }
 
-			if (slot == 0) {
-				slot = (u32)m_slots.size();
-				m_slots.resize(m_slots.size() * 2);
-				build_freelist(slot);
-				m_slots[0].next = slot + 1;
-			}
+    template<class... Args>
+    Handle<HandleType> emplace(Args&&... args) {
+        if (m_freelist_head == 0) {
+            grow_pool();
+        }
 
-			EMBER_ASSERT(slot < m_slots.size());
+        u32 slot = m_freelist_head;
+        m_freelist_head = m_slots[slot].next;
 
-			m_slots[slot].gen++;
-			m_slots[slot].active = true;
-			m_slots[slot].data.emplace(std::forward<Args>(args)...);
-			return {slot, m_slots[slot].gen};
-		}
+        Slot& slot_ref = m_slots[slot];
+        slot_ref.gen++;
+        slot_ref.construct(std::forward<Args>(args)...);
 
-		void erase(Handle<HandleType> handle) {
-			EMBER_ASSERT(handle.gen == m_slots[handle.slot].gen);
+        return {slot, slot_ref.gen};
+    }
 
-			// only erase the slot if the handle is correct
-			if (handle.gen == m_slots[handle.slot].gen) {
-				m_slots[handle.slot].data.reset();
-				m_slots[handle.slot].gen++;
-				m_slots[handle.slot].active = false;
-				m_slots[handle.slot].next = m_slots[0].next;
-				m_slots[0].next = handle.slot;
-			}
-		}
+    void erase(Handle<HandleType> handle) {
+        EMBER_ASSERT(handle.slot < m_slots.size() && "Invalid slot index!");
+        Slot& slot_ref = m_slots[handle.slot];
+        EMBER_ASSERT(handle.gen == slot_ref.gen && "Handle generation mismatch!");
 
-		T *get(Handle<HandleType> handle) {
-			if (handle.gen == m_slots[handle.slot].gen)
-				return &(m_slots[handle.slot].data.value());
-			else
-				return nullptr;
-		}
+        if (handle.gen == slot_ref.gen) {
+            slot_ref.destroy();
+            slot_ref.next = m_freelist_head;
+            m_freelist_head = handle.slot;
+        }
+    }
 
-		const T *get(Handle<HandleType> handle) const {
-			if (handle.gen == m_slots[handle.slot].gen)
-				return &(m_slots[handle.slot].data.value());
-			else
-				return nullptr;
-		}
+    T* get(Handle<HandleType> handle) {
+        if (is_valid(handle)) {
+            return m_slots[handle.slot].get();
+        }
+        return nullptr;
+    }
 
-		// Custom iterator classes
-		class iterator {
-		public:
-			// The proxy object returned by operator*
-			class reference_proxy {
-			public:
-				reference_proxy(Pool *pool, size_t index)
-					: m_pool(pool), m_index(index) {}
+    const T* get(Handle<HandleType> handle) const {
+        if (is_valid(handle)) {
+            return m_slots[handle.slot].get();
+        }
+        return nullptr;
+    }
 
-				// Access the underlying T
-				operator T&() const {
-					return m_pool->m_slots[m_index].data.value();
-				}
+    bool is_valid(Handle<HandleType> handle) const {
+        return handle.slot < m_slots.size() &&
+               m_slots[handle.slot].gen == handle.gen &&
+               m_slots[handle.slot].active;
+    }
 
-				// Provide a method to obtain the handle
-				Handle<HandleType> handle() const {
-					return Handle<HandleType>((u32)m_index, m_pool->m_slots[m_index].gen);
-				}
+    class iterator {
+    public:
+        struct reference_proxy {
+            reference_proxy(Pool* pool, size_t index)
+                : m_pool(pool), m_index(index) {}
 
-				// If you want implicit conversion to Handle<HandleType>
-				// so that destroy_shader(proxy) works directly:
-				operator Handle<HandleType>() const {
-					return handle();
-				}
+            operator T&() const {
+                return *m_pool->m_slots[m_index].get();
+            }
 
-			private:
-				Pool* m_pool;
-				size_t m_index;
-			};
+            Handle<HandleType> handle() const {
+                return {static_cast<u32>(m_index), m_pool->m_slots[m_index].gen};
+            }
 
-			using difference_type = std::ptrdiff_t;
-			using value_type = T;
-			using pointer = T*;
-			using reference = reference_proxy;
-			using iterator_category = std::forward_iterator_tag;
+        private:
+            Pool* m_pool;
+            size_t m_index;
+        };
 
-			iterator(Pool* pool, size_t index)
-				: m_pool(pool), m_index(index) {
-				advance_past_inactive();
-			}
+        iterator(Pool* pool, size_t index)
+            : m_pool(pool), m_index(index) {
+            advance_past_inactive();
+        }
 
-			reference operator*() const {
-				return reference_proxy(m_pool, m_index);
-			}
+        reference_proxy operator*() const {
+            return reference_proxy(m_pool, m_index);
+        }
 
-			iterator& operator++() {
-				++m_index;
-				advance_past_inactive();
-				return *this;
-			}
+        iterator& operator++() {
+            ++m_index;
+            advance_past_inactive();
+            return *this;
+        }
 
-			iterator operator++(int) {
-				iterator tmp = *this;
-				++(*this);
-				return tmp;
-			}
+        iterator operator++(int) {
+            iterator tmp = *this;
+            ++(*this);
+            return tmp;
+        }
 
-			bool operator==(const iterator& other) const {
-				return m_pool == other.m_pool && m_index == other.m_index;
-			}
+        bool operator==(const iterator& other) const {
+            return m_pool == other.m_pool && m_index == other.m_index;
+        }
 
-			bool operator!=(const iterator& other) const {
-				return !(*this == other);
-			}
+        bool operator!=(const iterator& other) const {
+            return !(*this == other);
+        }
 
-		private:
-			void advance_past_inactive() {
-				while (m_index < m_pool->m_slots.size() && !m_pool->m_slots[m_index].active) {
-					++m_index;
-				}
-			}
+    private:
+        void advance_past_inactive() {
+            while (m_index < m_pool->m_slots.size() && !m_pool->m_slots[m_index].active) {
+                ++m_index;
+            }
+        }
 
-			Pool* m_pool;
-			size_t m_index;
-		};
+        Pool* m_pool;
+        size_t m_index;
+    };
 
-		iterator begin() {
-			return iterator(this, 1); // start from slot 1, slot 0 is the freelist head
-		}
+    iterator begin() {
+        return iterator(this, 1); // Start from slot 1
+    }
 
-		iterator end() {
-			return iterator(this, m_slots.size());
-		}
+    iterator end() {
+        return iterator(this, m_slots.size());
+    }
 
-	private:
-		struct Slot {
-			Slot() : gen(0), next(0), active(false) {}
+private:
+    struct Slot {
+        u32 gen = 0;
+        bool active = false;
 
-			~Slot() {
-				if (active) {
-					data.reset();
-				}
-			}
+        union {
+            typename std::aligned_storage<sizeof(T), alignof(T)>::type data;
+            u32 next;
+        };
 
-			Slot(Slot&& other) noexcept : gen(other.gen), active(other.active), data(std::move(other.data)) {
-				other.active = false;
-			}
+        Slot() : next(0), active(false) {}
+        ~Slot() { destroy(); }
 
-			Slot& operator=(Slot&& other) noexcept {
-				if (this != &other) {
-					if (active) {
-						data.reset();
-					}
-					gen = other.gen;
-					active = other.active;
-					data = std::move(other.data);
-					other.active = false;
-				}
-				return *this;
-			}
+        Slot(Slot&& other) noexcept : gen(other.gen), active(other.active) {
+            if (active) {
+                construct(std::move(*other.get()));
+            } else {
+                next = other.next;
+            }
+            other.destroy();
+        }
 
-			u32 gen;
-			bool active = false;
-			union {
-				std::optional<T> data;
-				u32 next; // used when inactive
-			};
+        Slot& operator=(Slot&& other) noexcept {
+            if (this != &other) {
+                destroy();
+                gen = other.gen;
+                active = other.active;
+                if (active) {
+                    construct(std::move(*other.get()));
+                } else {
+                    next = other.next;
+                }
+                other.destroy();
+            }
+            return *this;
+        }
 
-			Slot(const Slot&) = delete;
-			Slot& operator=(const Slot&) = delete;
-		};
+        void destroy() {
+            if (active) {
+                reinterpret_cast<T*>(&data)->~T();
+                active = false;
+            }
+        }
 
-		void build_freelist(u32 start_slot) {
-			for (u32 i = start_slot; i < m_slots.size() - 1; ++i) {
-				m_slots[i].next = i + 1;
-			}
-			m_slots[m_slots.size() - 1].next = 0;
-		}
+        T* get() {
+            return active ? reinterpret_cast<T*>(&data) : nullptr;
+        }
 
-		std::vector<Slot> m_slots;
-	};
-}
+        const T* get() const {
+            return active ? reinterpret_cast<const T*>(&data) : nullptr;
+        }
+
+        template<class... Args>
+        void construct(Args&&... args) {
+            new (&data) T(std::forward<Args>(args)...);
+            active = true;
+        }
+
+        Slot(const Slot&) = delete;
+        Slot& operator=(const Slot&) = delete;
+    };
+
+    void build_freelist(u32 start, u32 end) {
+        for (u32 i = start; i < end - 1; ++i) {
+            m_slots[i].next = i + 1;
+        }
+        m_slots[end - 1].next = 0; // End of the freelist
+    }
+
+    void grow_pool() {
+        u32 old_size = m_slots.size();
+        u32 new_size = old_size * 2;
+        m_slots.resize(new_size);
+        build_freelist(old_size, new_size);
+        m_freelist_head = old_size;
+    }
+
+    std::vector<Slot> m_slots;
+    u32 m_freelist_head = 0;
+};
+
+} // namespace Ember

@@ -6,41 +6,52 @@
 
 namespace Ember
 {
-	struct VertexFormat
+struct VertexFormat {
+	struct Element
 	{
-		struct Element
-		{
-			int index		= 0;
-			VertexType type = VertexType::None;
-			bool normalized = true;
-		};
-
-		template <class T>
-		static VertexFormat create(std::span<Element> elements) {
-			return {elements, sizeof(T)};
-		}
-
-		template <class T>
-		static auto create(std::initializer_list<Element> list) {
-			std::vector<Element> elems(list);
-			return VertexFormat {
-				std::span<Element>(elems.data(), elems.size()),
-				sizeof(T)
-			};
-		}
-
-		VertexFormat() = default;
-		VertexFormat(std::span<Element> elements_, int stride_ = 0) {
-			for (auto& el : elements_) {
-				elements.push_back(el);
-				stride += VertexTypeExt::size(el.type);
-			}
-
-			if (stride_ != 0)
-				stride = stride_;
-		}
-
-		std::vector<Element> elements;
-		u32 stride = 0;
+		int index		= 0;
+		VertexType type = VertexType::None;
+		bool normalized = true;
 	};
+
+    std::vector<Element> elements;
+    u32 stride = 0;
+
+    VertexFormat() = default;
+
+    VertexFormat(std::vector<Element> elements_, int stride_ = 0)
+        : elements(std::move(elements_)) {
+        calculate_stride();
+        if (stride_ != 0) {
+            stride = stride_;
+        }
+    }
+
+    VertexFormat(const VertexFormat&) = default;
+    VertexFormat& operator=(const VertexFormat&) = default;
+
+    VertexFormat(VertexFormat&& other) noexcept
+        : elements(std::move(other.elements)), stride(other.stride) {
+        other.stride = 0;
+    }
+
+    VertexFormat& operator=(VertexFormat&& other) noexcept {
+        if (this != &other) {
+            elements = std::move(other.elements);
+            stride = other.stride;
+            other.stride = 0;
+        }
+        return *this;
+    }
+
+    ~VertexFormat() = default;
+
+private:
+    void calculate_stride() {
+        stride = 0;
+        for (auto& el : elements) {
+            stride += VertexTypeExt::size(el.type);
+        }
+    }
+};
 }

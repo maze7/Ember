@@ -15,7 +15,7 @@ namespace Ember
 
 		[[nodiscard]] i32 width() const;
 		[[nodiscard]] i32 height() const;
-		[[nodiscard]] Vector2i size() const;
+		[[nodiscard]] glm::ivec2 size() const;
 		[[nodiscard]] float aspect_ratio() const;
 		[[nodiscard]] const char* title() const;
 		[[nodiscard]] SDL_Window* native_handle() const { return m_window; }

@@ -2,19 +2,19 @@
 
 using namespace Ember;
 
-void Mouse::on_move(Vector2f position, Vector2f screen_position) {
+void Mouse::on_move(const glm::vec2& position, const glm::vec2& screen_position) {
 	m_position = position;
 	m_screen_position = screen_position;
 }
 
-void Mouse::on_wheel(Vector2f wheel) {
+void Mouse::on_wheel(const glm::vec2& wheel) {
 	m_wheel = wheel;
 }
 
 void Mouse::reset() {
 	std::ranges::fill(m_pressed, false);
 	std::ranges::fill(m_released, false);
-	m_wheel = Vector2f::zero;
+	m_wheel = glm::vec2(0, 0);
 }
 
 bool Mouse::down(MouseButton button) const {

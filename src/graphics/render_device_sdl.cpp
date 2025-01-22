@@ -103,13 +103,13 @@ void RenderDeviceSDL::destroy() {
 	m_framebuffer.reset();
 
 	for (auto target : m_targets)
-		destroy_target(target);
+		destroy_target(target.handle());
 
 	for (auto shader : m_shaders)
-		destroy_shader(shader);
+		destroy_shader(shader.handle());
 
 	for (auto texture : m_textures)
-		destroy_texture(texture);
+		destroy_texture(texture.handle());
 
 	for (auto& m_fence : m_fences) {
 		if (m_fence[0])
@@ -469,7 +469,7 @@ void RenderDeviceSDL::present() {
 
 	// if swapchain can be acquired, blit framebuffer to it
 	SDL_GPUTexture* swapchain_texture = nullptr;
-	Vector2u swapchain_size;
+	glm::uvec2 swapchain_size;
 	if (SDL_AcquireGPUSwapchainTexture(m_cmd_render, m_window->native_handle(), &swapchain_texture, &swapchain_size.x, &swapchain_size.y)) {
 		// SDL_AcquireGPUSwapchainTexture can return true, but no texture for a variety of reasons
 		// - window is minimized
@@ -695,8 +695,6 @@ void RenderDeviceSDL::upload_mesh_buffer(MeshResourceSDL::Buffer& buf, const voi
 
 		if (buf.handle == nullptr) {
 			throw Exception("Mesh Creation Failed");
-		} else {
-			Log::info("Buffer created: {}", size);
 		}
 		buf.capacity = size;
 	}

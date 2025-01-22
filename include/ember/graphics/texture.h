@@ -4,7 +4,6 @@
 #include "graphics/texture.h"
 #include "graphics/texture_format.h"
 #include "core/common.h"
-#include "math/vector2.h"
 #include "core/handle.h"
 
 namespace Ember
@@ -43,7 +42,7 @@ namespace Ember
 
 	private:
 		bool m_is_target_attachment = false;
-		Vector2u m_size = Vector2u::zero;
+		glm::uvec2 m_size;
 		TextureFormat m_format = TextureFormat::Color;
 		Handle<TextureResource> m_resource = Handle<TextureResource>::null;
 	};

@@ -31,7 +31,6 @@ add_library(
     src/input/keyboard.cpp
     include/ember/core/time.h
     src/core/time.cpp
-    include/ember/math/vector2.h
     src/input/mouse.cpp
     src/input/controller.cpp
     include/ember/input/virtual_axis.h
@@ -64,10 +63,10 @@ add_library(
     src/graphics/material.cpp
     include/ember/core/hash.h
     src/graphics/draw_command.cpp
-        include/ember/graphics/mesh.h
-        include/ember/graphics/vertex_format.h
-        include/ember/graphics/index_format.h
-        src/graphics/mesh.cpp
+    include/ember/graphics/mesh.h
+    include/ember/graphics/vertex_format.h
+    include/ember/graphics/index_format.h
+    src/graphics/mesh.cpp
 )
 
 # add include directories to Ember library
@@ -89,6 +88,11 @@ endif()
 add_subdirectory(lib/fmt)
 target_include_directories(Ember PUBLIC lib/fmt/include)
 target_link_libraries(Ember PUBLIC fmt::fmt)
+
+# Ember uses GLM for all 3D math
+add_subdirectory(lib/glm)
+target_include_directories(Ember PUBLIC lib/glm)
+target_link_libraries(Ember PUBLIC glm::glm)
 
 # Ember uses stb_image.h to load images from disk
 target_include_directories(Ember PUBLIC lib/stb)

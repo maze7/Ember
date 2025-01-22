@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <SDL3/SDL_gpu.h>
 
 #include "vertex_format.h"
@@ -43,8 +44,8 @@ namespace Ember
 			bool dirty = false;
 		};
 
-		MeshResourceSDL(VertexFormat v_format, IndexFormat i_format)
-			: vertex_format(v_format), index_format(i_format) {}
+		MeshResourceSDL(VertexFormat& v_format, IndexFormat i_format)
+			: vertex_format(std::move(v_format)), index_format(i_format) {}
 
 		Buffer index;
 		Buffer vertex;

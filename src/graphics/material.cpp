@@ -45,7 +45,7 @@ void Material::set(std::string_view uniform, float value) {
 	set(uniform, std::as_bytes(std::span(arr)));
 }
 
-void Material::set(std::string_view uniform, const Vector2f &value) {
+void Material::set(std::string_view uniform, const glm::vec2& value) {
 	float arr[2] = { value.x, value.y };
 	set(uniform, std::as_bytes(std::span(arr)));
 }

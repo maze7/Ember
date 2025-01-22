@@ -27,7 +27,7 @@ namespace Ember
 		bool has(std::string_view uniform, UniformType* type, int* array_elements) const;
 
 		void set(std::string_view uniform, float value);
-		void set(std::string_view uniform, const Vector2f& value);
+		void set(std::string_view uniform, const glm::vec2& value);
 		void set(std::string_view uniform, const Color& value);
 		void set(std::string_view uniform, std::span<const float> values);
 		void set(std::string_view uniform, std::span<const std::byte> data);
@@ -38,18 +38,18 @@ namespace Ember
 	private:
 		struct UniformInfo
 		{
-			bool is_vertex;
-			size_t offset;
-			size_t size;
+			bool is_vertex = false;
+			size_t offset = 0;
+			size_t size = 0;
 		};
 
 		void build_uniform_lookup();
 
 		Shader& m_shader;
-		std::vector<BoundSampler> m_vertex_samplers;
-		std::vector<BoundSampler> m_fragment_samplers;
-		std::vector<std::byte> m_vertex_uniform_buffer;
-		std::vector<std::byte> m_fragment_uniform_buffer;
+		std::vector<BoundSampler> m_vertex_samplers{};
+		std::vector<BoundSampler> m_fragment_samplers{};
+		std::vector<std::byte> m_vertex_uniform_buffer{};
+		std::vector<std::byte> m_fragment_uniform_buffer{};
 		std::unordered_map<std::string, UniformInfo> m_uniform_lookup;
 	};
 }
