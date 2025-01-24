@@ -611,6 +611,16 @@ void RenderDeviceSDL::flush_commands_and_acquire_fences() {
 	reset_command_buffers();
 }
 
+void RenderDeviceSDL::flush_commands_and_stall() {
+	flush_commands_and_acquire_fences();
+
+	if (m_fences[m_frame][0] || m_fences[m_frame][1]) {
+		SDL_WaitForGPUFences(m_gpu, true, m_fences[m_frame], 2);
+		SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][0]);
+		SDL_ReleaseGPUFence(m_gpu, m_fences[m_frame][1]);
+	}
+}
+
 Handle<ShaderResource> RenderDeviceSDL::create_shader(const ShaderDef& def) {
 	EMBER_ASSERT(m_initialized);
 
@@ -682,6 +692,88 @@ void RenderDeviceSDL::dispose_texture(Handle<TextureResource> handle) {
 		Log::trace("Destroying texture: [slot: {}, gen: {}]", handle.slot, handle.gen);
 		SDL_ReleaseGPUTexture(m_gpu, texture->texture);
 	}
+}
+
+void RenderDeviceSDL::set_texture_data(Handle<TextureResource> handle, std::span<std::byte> data) {
+	EMBER_ASSERT(m_initialized);
+
+	static constexpr auto round_alignment = [](u32 value, u32 alignment) {
+		return alignment * ((value + alignment - 1) / alignment);
+	};
+
+	// get the texture
+	auto tex = m_textures.get(handle);
+	if (tex == nullptr)
+		throw Exception("Tried to upload pixel data to a disposed texture");
+
+	bool cycle = m_texture_upload_buffer_offset == 0;
+	bool use_temp_upload_buffer = false;
+	SDL_GPUTransferBuffer* upload_buffer = m_texture_upload_buffer;
+	u32 upload_offset = 0;
+
+	m_texture_upload_buffer_offset = round_alignment(
+		m_texture_upload_buffer_offset,
+		SDL_GPUTextureFormatTexelBlockSize(tex->format)
+	);
+	upload_offset = m_texture_upload_buffer_offset;
+
+	// acquire transfer buffer
+	if (data.size() >= UPLOAD_BUFFER_SIZE) {
+		SDL_GPUTransferBufferCreateInfo info = {
+			.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+			.size = static_cast<u32>(data.size()),
+			.props = 0
+		};
+		upload_buffer = SDL_CreateGPUTransferBuffer(m_gpu, &info);
+		use_temp_upload_buffer = true;
+		cycle = false;
+		upload_offset = 0;
+	} else if (m_texture_upload_buffer_offset + data.size() >= UPLOAD_BUFFER_SIZE) {
+		if (m_texture_upload_buffer_cycle_count < MAX_UPLOAD_CYCLE_COUNT) {
+			cycle = true;
+			m_texture_upload_buffer_cycle_count++;
+			m_texture_upload_buffer_offset = 0;
+			upload_offset = 0;
+		} else {
+			flush_commands_and_stall();
+			begin_copy_pass();
+			cycle = true;
+			upload_offset = 0;
+		}
+	}
+
+	// copy data
+	std::byte* dst = static_cast<std::byte*>(SDL_MapGPUTransferBuffer(m_gpu, upload_buffer, cycle)) + upload_offset;
+	std::memcpy(dst, data.data(), data.size());
+	SDL_UnmapGPUTransferBuffer(m_gpu, upload_buffer);
+
+	// upload to the GPU
+	begin_copy_pass();
+	SDL_GPUTextureTransferInfo info = {
+		.transfer_buffer = upload_buffer,
+		.offset = upload_offset,
+		.pixels_per_row = tex->width,  // TODO: FNA3D uses 0
+		.rows_per_layer = tex->height, // TODO: FNA3D uses 0
+	};
+
+	SDL_GPUTextureRegion region = {
+		.texture = tex->texture,
+		.mip_level = 0,
+		.layer = 0,
+		.x = 0,
+		.y = 0,
+		.z = 0,
+		.w = tex->width,
+		.h = tex->height,
+		.d = 1
+	};
+	SDL_UploadToGPUTexture(m_copy_pass, &info, &region, cycle); // TODO: Foster uses false, should I too?
+
+	// upload buffer management
+	if (use_temp_upload_buffer)
+		SDL_ReleaseGPUTransferBuffer(m_gpu, upload_buffer);
+	else
+		m_texture_upload_buffer_offset += data.size();
 }
 
 Handle<TargetResource> RenderDeviceSDL::create_target(u32 width, u32 height) {

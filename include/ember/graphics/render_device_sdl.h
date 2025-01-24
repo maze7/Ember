@@ -75,6 +75,7 @@ namespace Ember
 
 		Handle<TextureResource> create_texture(u32 width, u32 height, TextureFormat format, Target* target) override;
 		void dispose_texture(Handle<TextureResource> handle) override;
+		void set_texture_data(Handle<TextureResource> handle, std::span<std::byte> data) override;
 
 		Handle<TargetResource> create_target(u32 width, u32 height) override;
 		void dispose_target(Handle<TargetResource> handle) override;
@@ -98,6 +99,7 @@ namespace Ember
 		void reset_command_buffers();
 		void flush_commands();
 		void flush_commands_and_acquire_fences();
+		void flush_commands_and_stall();
 		void begin_copy_pass();
 		void end_copy_pass();
 		bool begin_render_pass(ClearInfo clear, Target* target = nullptr);

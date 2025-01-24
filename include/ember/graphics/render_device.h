@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include "color.h"
 #include "index_format.h"
 #include "vertex_format.h"
@@ -47,6 +49,7 @@ namespace Ember
 		// texture resources
 		virtual Handle<TextureResource> create_texture(u32 width, u32 height, TextureFormat format, Target* target) = 0;
 		virtual void dispose_texture(Handle<TextureResource> handle) = 0;
+		virtual void set_texture_data(Handle<TextureResource> handle, std::span<std::byte> data) = 0;
 
 		// render target resources
 		virtual Handle<TargetResource> create_target(u32 width, u32 height) = 0;

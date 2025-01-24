@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include "graphics/render_device.h"
 #include "graphics/texture.h"
 #include "graphics/texture_format.h"
@@ -35,16 +37,31 @@ namespace Ember
 	public:
 
 		Texture(u32 width, u32 height, TextureFormat format = TextureFormat::Color, Target* target = nullptr);
+
+		Texture(u32 width, u32 height, std::span<std::byte> pixels);
+
 		~Texture();
 
-		[[nodiscard]] Handle<TextureResource> handle() const { return m_resource; }
+		[[nodiscard]] Handle<TextureResource> handle() const { return m_handle; }
 		[[nodiscard]] TextureFormat format() const { return m_format; }
+		[[nodiscard]] u32 memory_size() const { return m_size.x * m_size.y * TextureFormatExt::size(m_format); }
+
+		template <class T>
+		void set_data(std::span<T> data) {
+			if (sizeof(T) * data.size() < memory_size())
+				throw Exception("Data buffer is smaller than the size of the Texture");
+
+			render_device->set_texture_data(m_handle, data);
+		}
+
+		static Ref<Texture> load(std::string_view path);
 
 	private:
 		bool m_is_target_attachment = false;
 		glm::uvec2 m_size;
 		TextureFormat m_format = TextureFormat::Color;
-		Handle<TextureResource> m_resource = Handle<TextureResource>::null;
+		Handle<TextureResource> m_handle = Handle<TextureResource>::null;
+		u32 m_memory_size = 0;
 	};
 
 	inline bool operator==(const Ember::TextureSampler& lhs, const Ember::TextureSampler& rhs) {
