@@ -1,4 +1,5 @@
 #include "graphics/material.h"
+#include "gtc/type_ptr.hpp"
 
 using namespace Ember;
 
@@ -16,8 +17,8 @@ void Material::reset() {
 	// zero out uniform buffers and samplers
 	std::ranges::fill(m_vertex_uniform_buffer, static_cast<std::byte>(0));
 	std::ranges::fill(m_fragment_uniform_buffer, static_cast<std::byte>(0));
-	m_vertex_samplers.clear();
-	m_fragment_samplers.clear();
+	std::ranges::fill(m_vertex_samplers, BoundSampler{});
+	std::ranges::fill(m_fragment_samplers, BoundSampler{});
 }
 
 bool Material::has(std::string_view uniform) const {
@@ -50,6 +51,10 @@ void Material::set(std::string_view uniform, const glm::vec2& value) {
 	set(uniform, std::as_bytes(std::span(arr)));
 }
 
+void Material::set(std::string_view uniform, const glm::mat4 &value) {
+	set(uniform, std::as_bytes(std::span(glm::value_ptr(value), 16)));
+}
+
 void Material::set(std::string_view uniform, const Color& color) {
 	float arr[4] = { (float) color.r / 255, (float) color.g / 255, (float) color.b / 255, (float) color.a / 255 };
 	set(uniform, std::as_bytes(std::span(arr)));
@@ -76,5 +81,21 @@ void Material::set(std::string_view uniform, std::span<const std::byte> data) {
 
 	copy_data(m_shader.vertex().uniforms, m_vertex_uniform_buffer);
 	copy_data(m_shader.fragment().uniforms, m_fragment_uniform_buffer);
+}
+
+void Material::set_vertex_sampler(u32 index, Texture *texture, const TextureSampler &sampler) {
+	if (index >= MAX_SAMPLERS) {
+		throw std::out_of_range("Vertex sampler index out of range");
+	}
+
+	m_vertex_samplers[index] = { texture, sampler };
+}
+
+void Material::set_fragment_sampler(u32 index, Texture* texture, const TextureSampler &sampler) {
+	if (index >= MAX_SAMPLERS) {
+		throw std::out_of_range("Fragment sampler index out of range");
+	}
+
+	m_fragment_samplers[index] = { texture, sampler };
 }
 

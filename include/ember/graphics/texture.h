@@ -46,4 +46,16 @@ namespace Ember
 		TextureFormat m_format = TextureFormat::Color;
 		Handle<TextureResource> m_resource = Handle<TextureResource>::null;
 	};
+
+	inline bool operator==(const Ember::TextureSampler& lhs, const Ember::TextureSampler& rhs) {
+		return lhs.filter == rhs.filter && lhs.wrap_x == rhs.wrap_x && lhs.wrap_y == rhs.wrap_y;
+	}
 }
+
+template<>
+struct std::hash<Ember::TextureSampler>
+{
+	size_t operator()(const Ember::TextureSampler& sampler) const noexcept {
+		return combined_hash(sampler.filter, sampler.wrap_x, sampler.wrap_y);
+	}
+};

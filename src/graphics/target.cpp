@@ -17,8 +17,8 @@ Target::Target(u32 width, u32 height, std::initializer_list<TextureFormat> attac
 Target::~Target() {
 	// destroy attachments connected to this target
 	for (auto& attachment : m_attachments)
-		render_device->destroy_texture(attachment.handle());
+		render_device->dispose_texture(attachment.handle());
 
 	// destroy the target itself
-	render_device->destroy_target(m_resource);
+	render_device->dispose_target(m_resource);
 }

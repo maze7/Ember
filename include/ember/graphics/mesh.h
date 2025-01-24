@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include "index_format.h"
 #include "vertex_format.h"
 #include "core/common.h"

@@ -1,5 +1,7 @@
 #include "graphics/batcher.h"
 
+#include "graphics/draw_command.h"
+
 using namespace Ember;
 
 Batcher::Batcher() {
@@ -27,7 +29,22 @@ void Batcher::clear() {
 }
 
 void Batcher::upload() {
-	if ((m_batches.size() <= 0 && m_batch.elements <= 0) || m_indices.size() <= 0) {
-
+	if (m_mesh_dirty && m_vertices.size() >= 0 && m_indices.size() >= 0) {
+		m_mesh.set_vertices(m_vertices);
+		m_mesh.set_indices(m_indices);
+		m_mesh_dirty = false;
 	}
 }
+
+void Batcher::render(const Ref<Target> &target) {
+
+}
+
+void Batcher::render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix) {
+	batch.material->set("u_matrix", matrix);
+
+	DrawCommand cmd(target.get(), *batch.material, (VoidMesh*)&m_mesh);
+	cmd.submit();
+}
+
+

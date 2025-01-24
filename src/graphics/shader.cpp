@@ -25,5 +25,5 @@ Shader::Shader(const ShaderDef &def) {
 }
 
 Shader::~Shader() {
-	render_device->destroy_shader(m_resource);
+	render_device->dispose_shader(m_resource);
 }

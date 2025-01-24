@@ -1,6 +1,5 @@
 #pragma once
 
-#include <span>
 #include <vector>
 #include "vertex_type.h"
 

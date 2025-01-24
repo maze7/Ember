@@ -63,7 +63,7 @@ namespace Ember
 		~RenderDeviceSDL() override;
 
 		void init(Window *window) override;
-		void destroy() override;
+		void dispose() override;
 		void* native_handle() override { return m_gpu; }
 
 		void clear(Color color, float depth, int stencil, ClearMask mask, Target* target = nullptr) override;
@@ -71,16 +71,16 @@ namespace Ember
 		void present() override;
 
 		Handle<ShaderResource> create_shader(const ShaderDef &def) override;
-		void destroy_shader(Handle<ShaderResource> handle) override;
+		void dispose_shader(Handle<ShaderResource> handle) override;
 
 		Handle<TextureResource> create_texture(u32 width, u32 height, TextureFormat format, Target* target) override;
-		void destroy_texture(Handle<TextureResource> handle) override;
+		void dispose_texture(Handle<TextureResource> handle) override;
 
 		Handle<TargetResource> create_target(u32 width, u32 height) override;
-		void destroy_target(Handle<TargetResource> handle) override;
+		void dispose_target(Handle<TargetResource> handle) override;
 
 		Handle<MeshResource> create_mesh(VertexFormat vertex_format, IndexFormat index_format) override;
-		void destroy_mesh(Handle<MeshResource> handle) override;
+		void dispose_mesh(Handle<MeshResource> handle) override;
 		void set_mesh_vertex_data(Handle<MeshResource> handle, const void* data, int data_size, int data_dst_offset) override;
 		void set_mesh_index_data(Handle<MeshResource> handle, const void* data, int data_size, int data_dst_offset) override;
 
@@ -104,6 +104,7 @@ namespace Ember
 		void end_render_pass();
 		void upload_mesh_buffer(MeshResourceSDL::Buffer& buf, const void* data, int data_size, int data_dst_offset, SDL_GPUBufferUsageFlags usage);
 		SDL_GPUGraphicsPipeline* get_pso(DrawCommand cmd);
+		SDL_GPUSampler* get_sampler(TextureSampler sampler);
 
 		u32 m_frame = 0;
 		SDL_GPUFence* m_fences[MAX_FRAMES_IN_FLIGHT][2] = {
@@ -133,6 +134,7 @@ namespace Ember
 
 		std::unordered_map<u64, SDL_GPUGraphicsPipeline*> m_pso_cache;
 		std::unordered_map<Handle<ShaderResource>, std::vector<SDL_GPUGraphicsPipeline*>> m_pso_shaders;
+		std::unordered_map<TextureSampler, SDL_GPUSampler*> m_sampler_cache;
 		SDL_GPUGraphicsPipeline* m_render_pass_pso = nullptr;
 
 		u32 m_texture_upload_buffer_offset = 0;

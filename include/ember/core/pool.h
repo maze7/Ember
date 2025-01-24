@@ -41,7 +41,7 @@ public:
         EMBER_ASSERT(handle.gen == slot_ref.gen && "Handle generation mismatch!");
 
         if (handle.gen == slot_ref.gen) {
-            slot_ref.destroy();
+            slot_ref.dispose();
             slot_ref.next = m_freelist_head;
             m_freelist_head = handle.slot;
         }
@@ -145,7 +145,7 @@ private:
         };
 
         Slot() : next(0), active(false) {}
-        ~Slot() { destroy(); }
+        ~Slot() { dispose(); }
 
         Slot(Slot&& other) noexcept : gen(other.gen), active(other.active) {
             if (active) {
@@ -153,12 +153,12 @@ private:
             } else {
                 next = other.next;
             }
-            other.destroy();
+            other.dispose();
         }
 
         Slot& operator=(Slot&& other) noexcept {
             if (this != &other) {
-                destroy();
+                dispose();
                 gen = other.gen;
                 active = other.active;
                 if (active) {
@@ -166,12 +166,12 @@ private:
                 } else {
                     next = other.next;
                 }
-                other.destroy();
+                other.dispose();
             }
             return *this;
         }
 
-        void destroy() {
+        void dispose() {
             if (active) {
                 reinterpret_cast<T*>(&data)->~T();
                 active = false;

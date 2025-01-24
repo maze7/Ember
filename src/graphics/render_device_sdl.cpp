@@ -22,7 +22,7 @@ namespace
 		}
 	}
 
-	constexpr auto to_sdl_index_format = [](IndexFormat format) {
+	SDL_GPUIndexElementSize to_sdl_index_format(IndexFormat format) {
 		switch (format) {
 			case IndexFormat::Sixteen:
 				return SDL_GPU_INDEXELEMENTSIZE_16BIT;
@@ -33,7 +33,7 @@ namespace
 		}
 	};
 
-	constexpr auto to_sdl_vertex_format = [](VertexType type, bool normalized) {
+	SDL_GPUVertexElementFormat to_sdl_vertex_format(VertexType type, bool normalized) {
 		switch (type) {
 			case VertexType::Float:
 				return SDL_GPU_VERTEXELEMENTFORMAT_FLOAT;
@@ -59,6 +59,20 @@ namespace
 				throw Exception("Unknown vertex type");
 		}
 	};
+
+	SDL_GPUSamplerAddressMode to_sdl_wrap_mode(TextureWrap wrap) {
+		switch (wrap) {
+			case TextureWrap::Repeat:
+				return SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+			case TextureWrap::MirroredRepeat:
+				return SDL_GPU_SAMPLERADDRESSMODE_MIRRORED_REPEAT;
+			case TextureWrap::Clamp:
+				return SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+			default:
+				throw Exception("Unkown texture wrap mode");
+		}
+	}
+
 }
 
 void RenderDeviceSDL::init(Window* window) {
@@ -96,21 +110,29 @@ void RenderDeviceSDL::init(Window* window) {
 
 }
 
-void RenderDeviceSDL::destroy() {
+void RenderDeviceSDL::dispose() {
 	EMBER_ASSERT(m_initialized);
 	SDL_WaitForGPUIdle(m_gpu);
 
 	m_framebuffer.reset();
 
+	// destroy cached samplers
+	for (auto& [key, sampler] : m_sampler_cache)
+		SDL_ReleaseGPUSampler(m_gpu, sampler);
+
+	// dispose of allocated GPU render targets
 	for (auto target : m_targets)
-		destroy_target(target.handle());
+		dispose_target(target.handle());
 
+	// dispose of allocated GPU shaders
 	for (auto shader : m_shaders)
-		destroy_shader(shader.handle());
+		dispose_shader(shader.handle());
 
+	// dispose of allocated GPU textures
 	for (auto texture : m_textures)
-		destroy_texture(texture.handle());
+		dispose_texture(texture.handle());
 
+	// dispose of allocated GPU fences
 	for (auto& m_fence : m_fences) {
 		if (m_fence[0])
 			SDL_ReleaseGPUFence(m_gpu, m_fence[0]);
@@ -133,7 +155,7 @@ RenderDeviceSDL::RenderDeviceSDL(): m_pso_shaders() {}
 
 RenderDeviceSDL::~RenderDeviceSDL() {
 	if (m_initialized)
-		destroy();
+		dispose();
 }
 
 void RenderDeviceSDL::reset_command_buffers() {
@@ -271,8 +293,37 @@ void RenderDeviceSDL::clear(Color color, float depth, int stencil, ClearMask mas
 	}
 }
 
+SDL_GPUSampler* RenderDeviceSDL::get_sampler(TextureSampler sampler) {
+	// check if the sampler already exists in the cache
+	if (auto it = m_sampler_cache.find(sampler); it != m_sampler_cache.end())
+		return it->second;
 
+	// convert TextureSampler properties to SDL_GPU types
+	SDL_GPUFilter filter = (sampler.filter == TextureFilter::Nearest)
+							? SDL_GPU_FILTER_NEAREST
+							: (sampler.filter == TextureFilter::Linear)
+								? SDL_GPU_FILTER_LINEAR
+								: throw Exception("Unkown texture filter");
 
+	SDL_GPUSamplerCreateInfo info = {
+		.min_filter = filter,
+		.mag_filter = filter,
+		.address_mode_u = to_sdl_wrap_mode(sampler.wrap_x),
+		.address_mode_v = to_sdl_wrap_mode(sampler.wrap_y),
+		.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+		.compare_op = SDL_GPU_COMPAREOP_ALWAYS,
+		.enable_compare = false,
+	};
+
+	// create the sampler
+	SDL_GPUSampler* result = SDL_CreateGPUSampler(m_gpu, &info);
+	if (!result)
+		throw Exception("Failed to create GPU sampler: " + std::string(SDL_GetError()));
+
+	// cache the newly created sampler & return it
+	m_sampler_cache[sampler] = result;
+	return result;
+}
 
 void RenderDeviceSDL::draw(DrawCommand cmd) {
 	EMBER_ASSERT(m_initialized);
@@ -287,7 +338,7 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 
 	// set scissor
 	{
-		SDL_Rect rect{ 0, 0, m_render_pass_target->size().x, m_render_pass_target->size().y };
+		SDL_Rect rect{ 0, 0, static_cast<int>(m_render_pass_target->size().x), static_cast<int>(m_render_pass_target->size().y) };
 		SDL_SetGPUScissor(m_render_pass, &rect);
 	}
 
@@ -295,7 +346,8 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 	{
 		SDL_GPUViewport viewport{
 			.x = 0, .y = 0,
-			.w = m_render_pass_target->size().x, .h = m_render_pass_target->size().y,
+			.w = static_cast<float>(m_render_pass_target->size().x),
+			.h = static_cast<float>(m_render_pass_target->size().y),
 			.min_depth = 0, .max_depth = 1,
 		};
 		SDL_SetGPUViewport(m_render_pass, &viewport);
@@ -331,6 +383,29 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 			.offset = 0
 		};
 		SDL_BindGPUVertexBuffers(m_render_pass, 0, &vertex_binding, 1);
+	}
+
+	// bind fragment samplers
+	if (shader.fragment().num_samplers > 0) {
+		auto default_texture_resource = m_textures.get(m_default_texture);
+
+		std::vector<SDL_GPUTextureSamplerBinding> samplers(shader.fragment().num_samplers);
+		for (u32 i = 0; i < shader.fragment().num_samplers; i++) {
+			if (auto& tex = mat.fragment_samplers()[i].texture; tex != nullptr) {
+				auto tex_resource = m_textures.get(tex->handle());
+				if (tex_resource) {
+					samplers[i].texture = tex_resource->texture;
+				} else {
+					samplers[i].texture = default_texture_resource->texture;
+				}
+			} else {
+				samplers[i].texture = default_texture_resource->texture;
+			}
+
+			samplers[i].sampler = get_sampler(mat.fragment_samplers()[i].sampler);
+		}
+
+		SDL_BindGPUFragmentSamplers(m_render_pass, 0, samplers.data(), (u32)shader.fragment().num_samplers);
 	}
 
 	// upload vertex uniforms
@@ -565,7 +640,7 @@ Handle<ShaderResource> RenderDeviceSDL::create_shader(const ShaderDef& def) {
 	return m_shaders.emplace(vertex, fragment);
 }
 
-void RenderDeviceSDL::destroy_shader(Handle<ShaderResource> handle) {
+void RenderDeviceSDL::dispose_shader(Handle<ShaderResource> handle) {
 	if (auto shader = m_shaders.get(handle)) {
 		Log::trace("Destroying shader: [slot: {}, gen: {}]", handle.slot, handle.gen);
 		SDL_ReleaseGPUShader(m_gpu, shader->vertex);
@@ -602,7 +677,7 @@ Handle<TextureResource> RenderDeviceSDL::create_texture(u32 width, u32 height, T
 	return m_textures.emplace(texture, sdl_format, width, height, target != nullptr);
 }
 
-void RenderDeviceSDL::destroy_texture(Handle<TextureResource> handle) {
+void RenderDeviceSDL::dispose_texture(Handle<TextureResource> handle) {
 	if (auto texture = m_textures.get(handle)) {
 		Log::trace("Destroying texture: [slot: {}, gen: {}]", handle.slot, handle.gen);
 		SDL_ReleaseGPUTexture(m_gpu, texture->texture);
@@ -614,7 +689,7 @@ Handle<TargetResource> RenderDeviceSDL::create_target(u32 width, u32 height) {
 	return m_targets.emplace();
 }
 
-void RenderDeviceSDL::destroy_target(Handle<TargetResource> handle) {
+void RenderDeviceSDL::dispose_target(Handle<TargetResource> handle) {
 	if (auto target = m_targets.get(handle)) {
 		m_targets.erase(handle);
 	}
@@ -625,7 +700,7 @@ Handle<MeshResource> RenderDeviceSDL::create_mesh(VertexFormat vertex_format, In
 	return m_meshes.emplace(vertex_format, index_format);
 }
 
-void RenderDeviceSDL::destroy_mesh(Handle<MeshResource> handle) {
+void RenderDeviceSDL::dispose_mesh(Handle<MeshResource> handle) {
 	if (auto mesh = m_meshes.get(handle)) {
 		Log::trace("Destroying mesh: [slot: {}, gen: {}]", handle.slot, handle.gen);
 
@@ -730,7 +805,7 @@ void RenderDeviceSDL::upload_mesh_buffer(MeshResourceSDL::Buffer& buf, const voi
 
 	// copy data
 	{
-		void* dst = SDL_MapGPUTransferBuffer(m_gpu, upload_buffer, upload_cycle) + upload_offset;
+		std::byte* dst = static_cast<std::byte*>(SDL_MapGPUTransferBuffer(m_gpu, upload_buffer, upload_cycle)) + upload_offset;
 		memcpy(dst, data, data_size);
 		SDL_UnmapGPUTransferBuffer(m_gpu, upload_buffer);
 	}

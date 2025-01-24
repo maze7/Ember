@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include "logger.h"
 
 #if !defined(_MSC_VER)
@@ -65,6 +66,9 @@ namespace Ember
 	Unique<T> make_unique(Args&&... args) {
 		return std::make_unique<T>(std::forward<Args>(args)...);
 	}
+
+	template <typename T>
+	using Optional = std::optional<T>;
 }
 
 using Exception = std::runtime_error;

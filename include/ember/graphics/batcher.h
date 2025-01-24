@@ -1,10 +1,8 @@
 #pragma once
 
-#include <stack>
 #include <vec2.hpp>
 #include <vector>
 
-#include "blend.h"
 #include "material.h"
 #include "mesh.h"
 
@@ -44,6 +42,12 @@ namespace Ember
 		 */
 		void upload();
 
+		/**
+		 * Render the Batcher to the provided Target
+		 * @param target Ref to Target which should be rendered to, nullptr to render to Swapchain
+		 */
+		void render(const Ref<Target>& target = nullptr);
+
 	private:
 		struct Batch
 		{
@@ -59,7 +63,6 @@ namespace Ember
 			glm::vec2	pos;
 			glm::vec2	tex;
 			Color		col;
-			Color		mode; // R = Multiply, G = Wash, B = Fill, A = Padding
 
 			static VertexFormat format() {
 				return VertexFormat({
@@ -71,6 +74,8 @@ namespace Ember
 			}
 		};
 
+		void render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix);
+
 		Batch						m_batch;
 		glm::mat3x2					m_matrix{1.0};
 		Mesh<Vertex>				m_mesh;
@@ -80,5 +85,6 @@ namespace Ember
 		std::vector<glm::mat3x2>	m_matrix_stack;
 		std::vector<Ref<Material>>	m_material_stack;
 		TextureSampler				m_default_sampler;
+		bool						m_mesh_dirty = false;
 	};
 }

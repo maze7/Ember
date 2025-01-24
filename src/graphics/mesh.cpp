@@ -12,7 +12,7 @@ VoidMesh::VoidMesh(VertexFormat vertex_format, IndexFormat index_format)
 
 VoidMesh::~VoidMesh() {
 	if (!m_resource.is_null()) {
-		render_device->destroy_mesh(m_resource);
+		render_device->dispose_mesh(m_resource);
 	}
 }
 
