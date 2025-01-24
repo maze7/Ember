@@ -47,7 +47,7 @@ namespace Ember::Math
 		return new_min + ((t - old_min) / (old_max - old_min)) * (new_max - new_min);
 	}
 
-	constexpr f32 clamped_map(f32 t, f32 old_min, f32 old_max, f32 new_min, f32 new_max) {
+	constexpr f32 clamped_map(f32 t, const f32 old_min, f32 old_max, f32 new_min, f32 new_max) {
 		return map(Math::clamp(t, old_min, old_max), old_min, old_max, new_min, new_max);
 	}
 

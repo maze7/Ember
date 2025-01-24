@@ -38,7 +38,7 @@ namespace Ember
 	};
 
 	// Type-specialised Mesh class that wraps VoidMesh
-	template <VertexConcept TVertex, class TIndex>
+	template <VertexConcept TVertex, class TIndex = u16>
 	class Mesh : public VoidMesh
 	{
 	public:

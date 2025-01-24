@@ -67,6 +67,10 @@ add_library(
     include/ember/graphics/vertex_format.h
     include/ember/graphics/index_format.h
     src/graphics/mesh.cpp
+    include/ember/graphics/batcher.h
+    include/ember/graphics/blend.h
+    src/graphics/batcher.cpp
+    src/graphics/blend.cpp
 )
 
 # add include directories to Ember library
