@@ -37,8 +37,8 @@ namespace Ember
 		Texture(u32 width, u32 height, TextureFormat format = TextureFormat::Color, Target* target = nullptr);
 		~Texture();
 
-		Handle<TextureResource> handle() const { return m_resource; }
-		TextureFormat format() const { return m_format; }
+		[[nodiscard]] Handle<TextureResource> handle() const { return m_resource; }
+		[[nodiscard]] TextureFormat format() const { return m_format; }
 
 	private:
 		bool m_is_target_attachment = false;
