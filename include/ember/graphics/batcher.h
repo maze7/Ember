@@ -60,16 +60,15 @@ namespace Ember
 
 		struct Vertex
 		{
-			glm::vec2	pos;
-			glm::vec2	tex;
-			Color		col;
+			glm::vec2	position;
+			glm::vec2	tex_coord;
+			Color		color;
 
 			static VertexFormat format() {
 				return VertexFormat({
 					{ .index = 0, .type = VertexType::Float2, .normalized = false },
 					{ .index = 1, .type = VertexType::Float2, .normalized = false },
 					{ .index = 2, .type = VertexType::UByte4, .normalized = true  },
-					{ .index = 3, .type = VertexType::UByte4, .normalized = true  },
 				});
 			}
 		};

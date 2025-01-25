@@ -42,9 +42,8 @@ void Batcher::render(const Ref<Target> &target) {
 
 void Batcher::render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix) {
 	batch.material->set("u_matrix", matrix);
-
-	DrawCommand cmd(target.get(), *batch.material, (VoidMesh*)&m_mesh);
-	cmd.submit();
 }
+
+
 
 

@@ -106,7 +106,7 @@ void RenderDeviceSDL::init(Window* window) {
 
 	// create framebuffer
 	auto window_size = window->size();
-	m_framebuffer = std::make_unique<Target>((u32)window_size.x, (u32)window_size.y);
+	m_framebuffer = make_ref<Target>((u32)window_size.x, (u32)window_size.y);
 
 }
 
@@ -329,11 +329,11 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 	EMBER_ASSERT(m_initialized);
 
 	auto& mat = cmd.material;
-	auto& shader = mat.shader();
-	auto  target = cmd.target;
-	auto  mesh = cmd.mesh;
+	auto& shader = mat->shader();
+	auto& target = cmd.target;
+	auto& mesh = cmd.mesh;
 
-	if (!begin_render_pass(ClearInfo(), target))
+	if (!begin_render_pass(ClearInfo(), target.get()))
 		return;
 
 	// set scissor
@@ -391,7 +391,7 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 
 		std::vector<SDL_GPUTextureSamplerBinding> samplers(shader.fragment().num_samplers);
 		for (u32 i = 0; i < shader.fragment().num_samplers; i++) {
-			if (auto& tex = mat.fragment_samplers()[i].texture; tex != nullptr) {
+			if (auto& tex = mat->fragment_samplers()[i].texture; tex != nullptr) {
 				auto tex_resource = m_textures.get(tex->handle());
 				if (tex_resource) {
 					samplers[i].texture = tex_resource->texture;
@@ -402,7 +402,7 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 				samplers[i].texture = default_texture_resource->texture;
 			}
 
-			samplers[i].sampler = get_sampler(mat.fragment_samplers()[i].sampler);
+			samplers[i].sampler = get_sampler(mat->fragment_samplers()[i].sampler);
 		}
 
 		SDL_BindGPUFragmentSamplers(m_render_pass, 0, samplers.data(), (u32)shader.fragment().num_samplers);
@@ -410,11 +410,11 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 
 	// upload vertex uniforms
 	if (!shader.vertex().uniforms.empty())
-		SDL_PushGPUVertexUniformData(m_cmd_render, 0, (const void*)mat.vertex_data(), shader.vertex().uniform_buffer_size());
+		SDL_PushGPUVertexUniformData(m_cmd_render, 0, (const void*)mat->vertex_data(), shader.vertex().uniform_buffer_size());
 
 	// upload fragment uniforms
 	if (!shader.fragment().uniforms.empty())
-		SDL_PushGPUFragmentUniformData(m_cmd_render, 0, (const void*)mat.fragment_data(), shader.fragment().uniform_buffer_size());
+		SDL_PushGPUFragmentUniformData(m_cmd_render, 0, (const void*)mat->fragment_data(), shader.fragment().uniform_buffer_size());
 
 	// perform draw
 	SDL_DrawGPUIndexedPrimitives(m_render_pass, cmd.mesh_index_count, 1, cmd.mesh_index_start, cmd.mesh_vertex_offset, 0);
@@ -425,14 +425,14 @@ SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
 
 	auto hash = combined_hash(
 		cmd.target,
-		cmd.material.shader().handle(),
+		cmd.material->shader().handle(),
 		cmd.mesh->resource()
 	);
 
 	if (!cmd.target)
-		cmd.target = m_framebuffer.get();
+		cmd.target = m_framebuffer;
 
-	auto& shader = cmd.material.shader();
+	auto& shader = cmd.material->shader();
 	auto shader_res = m_shaders.get(shader.handle());
 	auto target = cmd.target;
 	auto mesh = cmd.mesh;

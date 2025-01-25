@@ -8,16 +8,16 @@ namespace Ember
 	class Material;
 	struct DrawCommand
 	{
-		Target* target = nullptr;
-		Material& material;
-		VoidMesh* mesh = nullptr;
+		Ref<Target> target = nullptr;
+		Ref<Material> material = nullptr;
+		Ref<VoidMesh> mesh = nullptr;
 
 		u32 mesh_index_start = 0;
 		u32 mesh_index_count = 0;
 		u32 mesh_vertex_offset = 0;
 
-		DrawCommand(Target* target, Material& material, VoidMesh* mesh = nullptr)
-			: target(target), material(material), mesh(mesh) {}
+		DrawCommand(const Ref<Target>& target, const Ref<Material>& mat, const Ref<VoidMesh>& mesh)
+			: target(target), material(mat), mesh(mesh) {}
 
 		void submit();
 	};

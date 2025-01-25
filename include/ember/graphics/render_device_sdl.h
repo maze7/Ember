@@ -124,7 +124,7 @@ namespace Ember
 		Pool<MeshResourceSDL, MeshResource>			m_meshes;
 
 		Handle<TextureResource>	m_default_texture{};
-		std::unique_ptr<Target>	m_framebuffer{};
+		Ref<Target>				m_framebuffer{};
 		SDL_GPUTransferBuffer*  m_texture_upload_buffer = nullptr;
 		SDL_GPUTransferBuffer*  m_buffer_upload_buffer = nullptr;
 		SDL_GPUCommandBuffer*   m_cmd_render = nullptr;
