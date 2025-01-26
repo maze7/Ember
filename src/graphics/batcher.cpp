@@ -7,7 +7,7 @@
 using namespace Ember;
 
 Batcher::Batcher() {
-
+	m_mesh = make_ref<Mesh<Vertex>>();
 }
 
 Batcher::~Batcher() {
@@ -32,18 +32,20 @@ void Batcher::clear() {
 
 void Batcher::upload() {
 	if (m_mesh_dirty && m_vertices.size() >= 0 && m_indices.size() >= 0) {
-		m_mesh.set_vertices(m_vertices);
-		m_mesh.set_indices(m_indices);
+		m_mesh->set_vertices(m_vertices);
+		m_mesh->set_indices(m_indices);
 		m_mesh_dirty = false;
 	}
 }
 
 void Batcher::render(const Ref<Target> &target) {
+	auto render_target = target ? target : render_device->framebuffer();
+
 	// render with an orthographic projection matrix to the provided render target
-	render(target, glm::ortho(
+	render(render_target, glm::ortho(
 		0.0f,
-		static_cast<float>(target->size().x),
-		static_cast<float>(target->size().y),
+		static_cast<float>(render_target->size().x),
+		static_cast<float>(render_target->size().y),
 		0.0f,
 		0.0f,
 		std::numeric_limits<float>::max()
@@ -54,7 +56,7 @@ void Batcher::render(const Ref<Target> &target, const glm::mat4 &matrix) {
 	if (m_vertices.empty() || m_indices.empty())
 		return; // skip render if no vertices have been pushed
 
-	if (m_batches.empty() || m_batch.elements <= 0)
+	if (m_batches.empty() && m_batch.elements <= 0)
 		return; // skip render if no batches have been saved & current batch is empty
 
 	// upload vertex and index data (if the mesh has been modified since the last upload)
@@ -71,14 +73,53 @@ void Batcher::render(const Ref<Target> &target, const glm::mat4 &matrix) {
 		render_batch(target, m_batch, matrix);
 }
 
+void Batcher::quad(const glm::vec2 &v0, const glm::vec2 &v1, const glm::vec2 &v2, const glm::vec2 &v3, Color c) {
+    // Reserve memory upfront to avoid multiple reallocations
+    if (m_vertices.capacity() - m_vertices.size() < 4) {
+        m_vertices.reserve(m_vertices.size() * 2); // Pre-reserve space for 1024 vertices
+    }
+    if (m_indices.capacity() - m_indices.size() < 6) {
+        m_indices.reserve(m_indices.size() + 1536); // Pre-reserve space for 1536 indices (6 per quad)
+    }
+
+    // Precomputed texture coordinates for a quad
+    static constexpr glm::vec2 tex_coords[4] = {
+        {0.0f, 0.0f},
+        {1.0f, 0.0f},
+        {1.0f, 1.0f},
+        {0.0f, 1.0f}
+    };
+
+    // Compute the starting index for this quad
+    u16 startIndex = static_cast<u16>(m_vertices.size());
+
+    // Add transformed vertices
+    m_vertices.push_back({m_matrix * glm::vec3(v0, 1.0f), tex_coords[0], c});
+    m_vertices.push_back({m_matrix * glm::vec3(v1, 1.0f), tex_coords[1], c});
+    m_vertices.push_back({m_matrix * glm::vec3(v2, 1.0f), tex_coords[2], c});
+    m_vertices.push_back({m_matrix * glm::vec3(v3, 1.0f), tex_coords[3], c});
+
+    // Add indices for the two triangles forming the quad
+    static const u16 quadIndices[6] = {0, 1, 2, 0, 2, 3};
+    for (u16 i : quadIndices) {
+        m_indices.push_back(startIndex + i);
+    }
+
+    // Update the batch element count
+    m_batch.elements += 2; // 2 triangles = 1 quad
+
+    // Mark the mesh as dirty
+    m_mesh_dirty = true;
+}
+
 void Batcher::render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix) {
-	batch.material->set("u_matrix", matrix);
+	batch.material->set("matrix", matrix);
 	batch.material->set_fragment_sampler(0, batch.texture.get(), batch.sampler);
 
 	DrawCommand cmd = {
 		.target = target,
 		.material = batch.material,
-		.mesh = Ref<Mesh<Vertex>>(&m_mesh),
+		.mesh = m_mesh,
 		.mesh_index_offset = batch.offset * 3,
 		.mesh_index_count = batch.elements * 3,
 	};

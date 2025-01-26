@@ -55,6 +55,21 @@ namespace Ember
 		 */
 		void render(const Ref<Target>& target, const glm::mat4& matrix);
 
+		/**
+		 * Renders a quad to the current Batch
+		 * @param v0
+		 * @param v1
+		 * @param v2
+		 * @param v3
+		 * @param c
+		 */
+		void quad(const glm::vec2& v0, const glm::vec2& v1, const glm::vec2& v2, const glm::vec2& v3, Color c);
+
+		// TODO: Move this to private once the stack management functions are implemented
+		void set_texture(const Ref<Texture>& texture);
+		void set_sampler(const TextureSampler& sampler);
+		void set_material(const Ref<Material>& material);
+
 	private:
 		struct Batch
 		{
@@ -82,14 +97,11 @@ namespace Ember
 			}
 		};
 
-		void set_texture(const Ref<Texture>& texture);
-		void set_sampler(const TextureSampler& sampler);
-		void set_material(const Ref<Material>& material);
 		void render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix);
 
 		Batch						m_batch;
 		glm::mat3x2					m_matrix{1.0};
-		Mesh<Vertex>				m_mesh;
+		Ref<Mesh<Vertex>>			m_mesh;
 		std::vector<u16>			m_indices;
 		std::vector<Vertex>			m_vertices;
 		std::vector<Batch>			m_batches;

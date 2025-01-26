@@ -79,6 +79,7 @@ namespace Ember
 
 		Handle<TargetResource> create_target(u32 width, u32 height) override;
 		void dispose_target(Handle<TargetResource> handle) override;
+		Ref<Target> framebuffer() override { return m_framebuffer; }
 
 		Handle<MeshResource> create_mesh(VertexFormat vertex_format, IndexFormat index_format) override;
 		void dispose_mesh(Handle<MeshResource> handle) override;

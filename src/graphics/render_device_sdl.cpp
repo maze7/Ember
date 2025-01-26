@@ -330,7 +330,7 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 
 	auto& mat = cmd.material;
 	auto& shader = mat->shader();
-	auto& target = cmd.target;
+	auto& target = cmd.target ? cmd.target : m_framebuffer;
 	auto& mesh = cmd.mesh;
 
 	if (!begin_render_pass(ClearInfo(), target.get()))

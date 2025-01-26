@@ -54,6 +54,7 @@ namespace Ember
 		// render target resources
 		virtual Handle<TargetResource> create_target(u32 width, u32 height) = 0;
 		virtual void dispose_target(Handle<TargetResource> handle) = 0;
+		virtual Ref<Target> framebuffer() = 0;
 
 		// mesh resources
 		virtual Handle<MeshResource> create_mesh(VertexFormat vertex_format, IndexFormat index_format) = 0;
