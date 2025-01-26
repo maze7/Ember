@@ -48,6 +48,13 @@ namespace Ember
 		 */
 		void render(const Ref<Target>& target = nullptr);
 
+		/**
+		 * Render the Batcher to the provided Target
+		 * @param target Render Target to draw the batch to
+		 * @param matrix Transform matrix for the whole batch
+		 */
+		void render(const Ref<Target>& target, const glm::mat4& matrix);
+
 	private:
 		struct Batch
 		{
@@ -56,6 +63,8 @@ namespace Ember
 			TextureSampler sampler;
 			u32 offset = 0;
 			u32 elements = 0;
+
+			bool has_elements() const { return elements > 0; }
 		};
 
 		struct Vertex
@@ -73,6 +82,9 @@ namespace Ember
 			}
 		};
 
+		void set_texture(const Ref<Texture>& texture);
+		void set_sampler(const TextureSampler& sampler);
+		void set_material(const Ref<Material>& material);
 		void render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix);
 
 		Batch						m_batch;

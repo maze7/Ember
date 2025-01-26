@@ -417,7 +417,7 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 		SDL_PushGPUFragmentUniformData(m_cmd_render, 0, (const void*)mat->fragment_data(), shader.fragment().uniform_buffer_size());
 
 	// perform draw
-	SDL_DrawGPUIndexedPrimitives(m_render_pass, cmd.mesh_index_count, 1, cmd.mesh_index_start, cmd.mesh_vertex_offset, 0);
+	SDL_DrawGPUIndexedPrimitives(m_render_pass, cmd.mesh_index_count, 1, cmd.mesh_index_offset, cmd.mesh_vertex_offset, 0);
 }
 
 SDL_GPUGraphicsPipeline* RenderDeviceSDL::get_pso(DrawCommand cmd) {
