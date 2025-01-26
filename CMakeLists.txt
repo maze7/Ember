@@ -52,7 +52,7 @@ add_library(
     include/ember/graphics/texture_format.h
     src/graphics/texture.cpp
     include/ember/graphics/target.h
-    include/ember/math/rect.h
+        include/ember/math/quad.h
     src/graphics/target.cpp
     include/ember/graphics/color.h
     src/graphics/color.cpp

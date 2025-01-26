@@ -5,6 +5,7 @@
 
 #include "material.h"
 #include "mesh.h"
+#include "math/quad.h"
 
 namespace Ember
 {
@@ -54,6 +55,13 @@ namespace Ember
 		 * @param matrix Transform matrix for the whole batch
 		 */
 		void render(const Ref<Target>& target, const glm::mat4& matrix);
+
+		/**
+		 * 
+		 * @param quad 
+		 * @param c 
+		 */
+		void quad(const Quad<float>& quad, Color c);
 
 		/**
 		 * Renders a quad to the current Batch

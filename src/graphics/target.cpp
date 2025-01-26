@@ -9,7 +9,7 @@ Target::Target(u32 width, u32 height, std::initializer_list<TextureFormat> attac
 	EMBER_ASSERT(attachments.size() > 0);
 
 	m_resource = render_device->create_target(width, height);
-	m_rect = Rect<u32>(0, 0, width, height);
+	m_rect = Quad<u32>(0, 0, width, height);
 	for (auto format : attachments)
 		m_attachments.emplace_back(width, height, format, this);
 }

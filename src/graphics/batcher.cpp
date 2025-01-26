@@ -73,6 +73,16 @@ void Batcher::render(const Ref<Target> &target, const glm::mat4 &matrix) {
 		render_batch(target, m_batch, matrix);
 }
 
+void Batcher::quad(const Quad<float>& q, Color c) {
+	quad(
+		q.position(),
+		{ q.x + q.width, q.y },
+		{ q.x + q.width, q.y + q.height },
+		{ q.x, q.y + q.height },
+		c
+	);
+}
+
 void Batcher::quad(const glm::vec2 &v0, const glm::vec2 &v1, const glm::vec2 &v2, const glm::vec2 &v3, Color c) {
     // Reserve memory upfront to avoid multiple reallocations
     if (m_vertices.capacity() - m_vertices.size() < 4) {

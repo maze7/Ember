@@ -5,14 +5,14 @@
 namespace Ember
 {
 	template <class T> requires std::is_arithmetic_v<T>
-	struct Rect
+	struct Quad
 	{
-		Rect() : x(0), y(0), width(0), height(0) {}
+		Quad() : x(0), y(0), width(0), height(0) {}
 
-		Rect(T x, T y, T width, T height)
+		Quad(T x, T y, T width, T height)
 			: x(x), y(y), width(width), height(height) {}
 
-		Rect(glm::vec<2, T> pos, glm::vec<2, T> size)
+		Quad(glm::vec<2, T> pos, glm::vec<2, T> size)
 			: x(pos.x), y(pos.y), width(size.x), height(size.y) {}
 
 		glm::vec<2, T> position() const {
@@ -23,7 +23,7 @@ namespace Ember
 			return glm::vec<2, T>(width, height);
 		}
 
-		float area() const {
+		[[nodiscard]] float area() const {
 			return width * height;
 		}
 
@@ -39,4 +39,7 @@ namespace Ember
 
 		T x, y, width, height;
 	};
+
+	template <class T>
+	using Rect = Quad<T>;
 }
