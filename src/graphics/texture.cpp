@@ -22,7 +22,7 @@ Texture::~Texture() {
 Ref<Texture> Texture::load(std::string_view path) {
 	int width, height, channels;
 
-	stbi_set_flip_vertically_on_load(true);
+	// stbi_set_flip_vertically_on_load(true);
 
 	// load the image data using stb_image
 	stbi_uc* data = stbi_load(path.data(), &width, &height, &channels, 4);

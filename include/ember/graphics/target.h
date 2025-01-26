@@ -5,7 +5,7 @@
 #include "graphics/texture.h"
 #include "graphics/texture_format.h"
 #include "core/common.h"
-#include "math/quad.h"
+#include "math/rect.h"
 
 namespace Ember
 {
@@ -26,7 +26,7 @@ namespace Ember
 		}
 
 	private:
-		Quad<u32> m_rect;
+		Rect<u32> m_rect;
 		std::vector<Texture> m_attachments;
 		Handle<TargetResource> m_resource = Handle<TargetResource>::null;
 	};

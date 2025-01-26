@@ -5,7 +5,7 @@
 
 #include "material.h"
 #include "mesh.h"
-#include "math/quad.h"
+#include "math/rect.h"
 
 namespace Ember
 {
@@ -61,7 +61,7 @@ namespace Ember
 		 * @param quad 
 		 * @param c 
 		 */
-		void quad(const Quad<float>& quad, Color c);
+		void quad(const Rect<float>& quad, const Ref<Texture>& texture, Color c);
 
 		/**
 		 * Renders a quad to the current Batch
@@ -71,7 +71,7 @@ namespace Ember
 		 * @param v3
 		 * @param c
 		 */
-		void quad(const glm::vec2& v0, const glm::vec2& v1, const glm::vec2& v2, const glm::vec2& v3, Color c);
+		void quad(const glm::vec2& v0, const glm::vec2& v1, const glm::vec2& v2, const glm::vec2& v3, const Ref<Texture>& texture = nullptr, Color c = Color::White);
 
 		// TODO: Move this to private once the stack management functions are implemented
 		void set_texture(const Ref<Texture>& texture);

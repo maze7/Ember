@@ -52,7 +52,7 @@ add_library(
     include/ember/graphics/texture_format.h
     src/graphics/texture.cpp
     include/ember/graphics/target.h
-        include/ember/math/quad.h
+        include/ember/math/rect.h
     src/graphics/target.cpp
     include/ember/graphics/color.h
     src/graphics/color.cpp
@@ -71,6 +71,7 @@ add_library(
     include/ember/graphics/blend.h
     src/graphics/batcher.cpp
     src/graphics/blend.cpp
+        include/ember/math/quad.h
 )
 
 # add include directories to Ember library
