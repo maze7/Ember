@@ -14,6 +14,13 @@ Batcher::~Batcher() {
 
 }
 
+void Batcher::new_batch() {
+	if (m_batch.has_elements()) {
+		m_batches.emplace_back(m_batch);
+		m_batch = Batch{};
+	}
+}
+
 void Batcher::clear() {
 	m_matrix = glm::mat3x2(1.0);
 	m_vertices.clear();
@@ -63,9 +70,9 @@ void Batcher::render(const Ref<Target> &target, const glm::mat4 &matrix) {
 	upload();
 
 	// render batches
-	for (const auto & m_batche : m_batches) {
+	for (const auto& m_batch : m_batches) {
 		// render the batch
-		render_batch(target, m_batche, matrix);
+		render_batch(target, m_batch, matrix);
 	}
 
 	// draw remaining elements in the current batch
@@ -127,18 +134,9 @@ void Batcher::quad(const glm::vec2& v0, const glm::vec2 &v1, const glm::vec2 &v2
 }
 
 void Batcher::line(const glm::vec2& from, const glm::vec2& to, float line_width, Color c) {
-  // Calculate the direction vector of the line
-  glm::vec2 direction = to - from;
-  glm::vec2 normal = glm::normalize(glm::vec2(-direction.y, direction.x));
-
-  // Calculate the four corner points of the line quad
-  glm::vec2 v0 = from + normal * (line_width / 2.0f);
-  glm::vec2 v1 = from - normal * (line_width / 2.0f);
-  glm::vec2 v2 = to - normal * (line_width / 2.0f);
-  glm::vec2 v3 = to + normal * (line_width / 2.0f);
-
-  // Use anti-clockwise winding order to match quad() function
-  quad(v0, v3, v2, v1, nullptr, c);
+	auto dir = normalize(to - from);
+	auto perp = glm::vec2(-dir.y, dir.x) * line_width * 0.5f;
+	quad(from + perp, from - perp, to - perp, to + perp, nullptr, c);
 }
 
 void Batcher::render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix) {
@@ -158,7 +156,7 @@ void Batcher::render_batch(const Ref<Target>& target, const Batch& batch, const 
 
 void Batcher::set_texture(const Ref<Texture> &texture) {
 	// if the current batch has draw data & doesn't use the desired texture, begin a new batch
-	if (m_batch.has_elements() && texture != m_batch.texture && m_batch.texture != nullptr) {
+	if (m_batch.has_elements() && texture != m_batch.texture) {
 		m_batches.emplace_back(m_batch);
 		m_batch = Batch{};
 	}

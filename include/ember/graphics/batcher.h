@@ -33,6 +33,8 @@ namespace Ember
 		Batcher();
 		~Batcher();
 
+		void new_batch();
+
 		/**
 		 * Clears the Batcher
 		 */
