@@ -6,7 +6,7 @@
 
 using namespace Ember;
 
-Batcher::Batcher() {
+Batcher::Batcher() : m_matrix(1.0f) {
 	m_mesh = make_ref<Mesh<Vertex>>();
 }
 
@@ -76,38 +76,38 @@ void Batcher::render(const Ref<Target> &target, const glm::mat4 &matrix) {
 void Batcher::quad(const Rect<float>& q, const Ref<Texture>& texture, Color c) {
 	quad(
 		q.position(),
-		{ q.x + q.width, q.y },
-		{ q.x + q.width, q.y + q.height },
 		{ q.x, q.y + q.height },
+		{ q.x + q.width, q.y + q.height },
+		{ q.x + q.width, q.y },
 		texture,
 		c
 	);
 }
 
-void Batcher::quad(const glm::vec2 &v0, const glm::vec2 &v1, const glm::vec2 &v2, const glm::vec2 &v3, const Ref<Texture>& texture, Color c) {
+void Batcher::quad(const glm::vec2& v0, const glm::vec2 &v1, const glm::vec2 &v2, const glm::vec2 &v3, const Ref<Texture>& texture, Color c) {
 	if (texture)
 		set_texture(texture);
 
     // Reserve memory upfront to avoid multiple reallocations
     if (m_vertices.capacity() - m_vertices.size() < 4) {
-        m_vertices.reserve(m_vertices.size() * 2); // Pre-reserve space for 1024 vertices
+        m_vertices.reserve(m_vertices.size() * 2);
     }
     if (m_indices.capacity() - m_indices.size() < 6) {
-        m_indices.reserve(m_indices.size() + 1536); // Pre-reserve space for 1536 indices (6 per quad)
+        m_indices.reserve(m_indices.size() * 2);
     }
 
     // Precomputed texture coordinates for a quad
     static constexpr glm::vec2 tex_coords[4] = {
-        {0.0f, 0.0f},
-        {1.0f, 0.0f},
-        {1.0f, 1.0f},
-        {0.0f, 1.0f}
+        {0.0f, 0.0f}, // Top-left
+        {0.0f, 1.0f}, // Bottom-left
+        {1.0f, 1.0f}, // Bottom-right
+        {1.0f, 0.0f}  // Top-right
     };
 
     // Compute the starting index for this quad
     u16 startIndex = static_cast<u16>(m_vertices.size());
 
-    // Add transformed vertices
+    // Add transformed vertices in clockwise order (top-left -> bottom-left -> bottom-right -> top-right)
     m_vertices.push_back({m_matrix * glm::vec3(v0, 1.0f), tex_coords[0], c});
     m_vertices.push_back({m_matrix * glm::vec3(v1, 1.0f), tex_coords[1], c});
     m_vertices.push_back({m_matrix * glm::vec3(v2, 1.0f), tex_coords[2], c});
@@ -124,6 +124,21 @@ void Batcher::quad(const glm::vec2 &v0, const glm::vec2 &v1, const glm::vec2 &v2
 
     // Mark the mesh as dirty
     m_mesh_dirty = true;
+}
+
+void Batcher::line(const glm::vec2& from, const glm::vec2& to, float line_width, Color c) {
+  // Calculate the direction vector of the line
+  glm::vec2 direction = to - from;
+  glm::vec2 normal = glm::normalize(glm::vec2(-direction.y, direction.x));
+
+  // Calculate the four corner points of the line quad
+  glm::vec2 v0 = from + normal * (line_width / 2.0f);
+  glm::vec2 v1 = from - normal * (line_width / 2.0f);
+  glm::vec2 v2 = to - normal * (line_width / 2.0f);
+  glm::vec2 v3 = to + normal * (line_width / 2.0f);
+
+  // Use anti-clockwise winding order to match quad() function
+  quad(v0, v3, v2, v1, nullptr, c);
 }
 
 void Batcher::render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix) {

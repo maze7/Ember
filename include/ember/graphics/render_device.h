@@ -12,6 +12,8 @@
 
 namespace Ember
 {
+	class Texture;
+
 	enum class ClearMask : i32
 	{
 		None = 0,

@@ -102,7 +102,8 @@ void RenderDeviceSDL::init(Window* window) {
 
 	// create default texture
 	m_default_texture = create_texture(1, 1, TextureFormat::R8G8B8A8, nullptr);
-	// upload default white texture data
+	std::byte pixel[4] = { std::byte(255), std::byte(255), std::byte(255), std::byte(255) };
+	set_texture_data(m_default_texture, std::span(pixel, sizeof(pixel)));
 
 	// create framebuffer
 	auto window_size = window->size();

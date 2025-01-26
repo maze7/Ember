@@ -73,6 +73,15 @@ namespace Ember
 		 */
 		void quad(const glm::vec2& v0, const glm::vec2& v1, const glm::vec2& v2, const glm::vec2& v3, const Ref<Texture>& texture = nullptr, Color c = Color::White);
 
+		/**
+		 * Draws a line between two points
+		 * @param from
+		 * @param to
+		 * @param line_width
+		 * @param c
+		 */
+		void line(const glm::vec2& from, const glm::vec2& to, float line_width, Color c = Color::White);
+
 		// TODO: Move this to private once the stack management functions are implemented
 		void set_texture(const Ref<Texture>& texture);
 		void set_sampler(const TextureSampler& sampler);
@@ -108,7 +117,7 @@ namespace Ember
 		void render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix);
 
 		Batch						m_batch;
-		glm::mat3x2					m_matrix{1.0};
+		glm::mat3x2					m_matrix;
 		Ref<Mesh<Vertex>>			m_mesh;
 		std::vector<u16>			m_indices;
 		std::vector<Vertex>			m_vertices;
