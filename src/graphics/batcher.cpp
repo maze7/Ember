@@ -24,13 +24,13 @@ Batcher::Batcher() : m_matrix(1.0f) {
 
 	m_default_shader = make_ref<Shader>(ShaderDef{
 		.vertex = {
-			.code = load_file("res/shaders/triangle.vert.spv"),
+			.code = load_file("res/shaders/batcher.vert.spv"),
 			.uniforms = {
 				{ .name = "matrix", .type = UniformType::Mat4x4 }
 			}
 		},
 		.fragment = {
-			.code = load_file("res/shaders/triangle.frag.spv"),
+			.code = load_file("res/shaders/batcher.frag.spv"),
 			.num_samplers = 1,
 		}
 	});
