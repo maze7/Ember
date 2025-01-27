@@ -45,8 +45,7 @@ namespace Ember
 			}
 		};
 
-		explicit Shader(const ShaderDef& def);
-
+		Shader(const ShaderDef& def);
 		~Shader();
 
 		[[nodiscard]] const Program& vertex() const { return m_vertex; }

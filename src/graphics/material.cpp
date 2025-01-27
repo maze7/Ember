@@ -3,14 +3,14 @@
 
 using namespace Ember;
 
-Material::Material(Shader &shader) : m_shader(shader) {
+Material::Material(Ref<Shader> shader) : m_shader(shader) {
 	set_shader(shader);
 }
 
-void Material::set_shader(Shader &shader) {
+void Material::set_shader(Ref<Shader> shader) {
 	m_shader = shader;
-	m_vertex_uniform_buffer.resize(m_shader.vertex().uniform_buffer_size());
-	m_fragment_uniform_buffer.resize(m_shader.fragment().uniform_buffer_size());
+	m_vertex_uniform_buffer.resize(m_shader->vertex().uniform_buffer_size());
+	m_fragment_uniform_buffer.resize(m_shader->fragment().uniform_buffer_size());
 }
 
 void Material::reset() {
@@ -38,7 +38,7 @@ bool Material::has(std::string_view uniform, UniformType* type, int* array_eleme
 		return false;
 	};
 
-	return search_uniform(m_shader.vertex().uniforms) || search_uniform(m_shader.fragment().uniforms);
+	return search_uniform(m_shader->vertex().uniforms) || search_uniform(m_shader->fragment().uniforms);
 }
 
 void Material::set(std::string_view uniform, float value) {
@@ -79,8 +79,8 @@ void Material::set(std::string_view uniform, std::span<const std::byte> data) {
 		return false;
 	};
 
-	copy_data(m_shader.vertex().uniforms, m_vertex_uniform_buffer);
-	copy_data(m_shader.fragment().uniforms, m_fragment_uniform_buffer);
+	copy_data(m_shader->vertex().uniforms, m_vertex_uniform_buffer);
+	copy_data(m_shader->fragment().uniforms, m_fragment_uniform_buffer);
 }
 
 void Material::set_vertex_sampler(u32 index, Texture *texture, const TextureSampler &sampler) {

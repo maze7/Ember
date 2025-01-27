@@ -1,17 +1,51 @@
 #include "graphics/batcher.h"
-
+#include "SDL3/SDL.h"
 #include <ext/matrix_clip_space.hpp>
-
 #include "graphics/draw_command.h"
 
 using namespace Ember;
 
+// TODO: Move this to a utility method
+std::vector<u8> load_file(const char* path) {
+	size_t code_size;
+	void* code = SDL_LoadFile(path, &code_size);
+
+	if (code != nullptr) {
+		std::vector<u8> contents((u8*)code, (u8*) code + code_size);
+		SDL_free(code);
+		return contents;
+	}
+
+	return {};
+}
+
 Batcher::Batcher() : m_matrix(1.0f) {
 	m_mesh = make_ref<Mesh<Vertex>>();
+
+	m_default_shader = make_ref<Shader>(ShaderDef{
+		.vertex = {
+			.code = load_file("res/shaders/triangle.vert.spv"),
+			.uniforms = {
+				{ .name = "matrix", .type = UniformType::Mat4x4 }
+			}
+		},
+		.fragment = {
+			.code = load_file("res/shaders/triangle.frag.spv"),
+			.num_samplers = 1,
+		}
+	});
+	m_default_material = make_ref<Material>(m_default_shader);
+
+	m_default_sampler = TextureSampler{
+		.filter = TextureFilter::Linear,
+		.wrap_x = TextureWrap::Clamp,
+		.wrap_y = TextureWrap::Clamp,
+	};
 }
 
 Batcher::~Batcher() {
-
+	m_default_shader.reset();
+	m_default_material.reset();
 }
 
 void Batcher::new_batch() {
@@ -26,10 +60,11 @@ void Batcher::clear() {
 	m_vertices.clear();
 	m_indices.clear();
 
+	m_batch = Batch{};
 	m_batch.elements = 0;
 	m_batch.offset = 0;
-	m_batch.material.reset();
-	m_batch.texture.reset();
+	m_batch.material = m_default_material;
+	m_batch.texture = nullptr;
 	m_batch.sampler = m_default_sampler;
 
 	m_matrix_stack.clear();

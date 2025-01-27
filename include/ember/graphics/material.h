@@ -19,10 +19,11 @@ namespace Ember
 			TextureSampler sampler{};
 		};
 
-		explicit Material(Shader& shader);
+		Material() = default;
+		explicit Material(Ref<Shader> shader);
 
-		auto shader() const -> Shader& { return m_shader; }
-		void set_shader(Shader& shader);
+		auto shader() const -> Shader& { return *m_shader; }
+		void set_shader(Ref<Shader> shader);
 
 		void reset();
 		bool has(std::string_view uniform) const;
@@ -54,7 +55,7 @@ namespace Ember
 
 		void build_uniform_lookup();
 
-		Shader& m_shader;
+		Ref<Shader> m_shader = nullptr;
 		std::array<BoundSampler, MAX_SAMPLERS> m_vertex_samplers{};
 		std::array<BoundSampler, MAX_SAMPLERS> m_fragment_samplers{};
 		std::vector<std::byte> m_vertex_uniform_buffer{};

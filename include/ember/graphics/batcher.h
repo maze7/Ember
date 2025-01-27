@@ -126,6 +126,8 @@ namespace Ember
 		std::vector<Batch>			m_batches;
 		std::vector<glm::mat3x2>	m_matrix_stack;
 		std::vector<Ref<Material>>	m_material_stack;
+		Ref<Material>				m_default_material;
+		Ref<Shader>					m_default_shader;
 		TextureSampler				m_default_sampler;
 		bool						m_mesh_dirty = false;
 	};
