@@ -50,8 +50,13 @@ Batcher::~Batcher() {
 
 void Batcher::new_batch() {
 	if (m_batch.has_elements()) {
+		u32 offset = m_batch.offset + m_batch.elements;
 		m_batches.emplace_back(m_batch);
 		m_batch = Batch{};
+		m_batch.material = m_default_material;
+		m_batch.sampler = m_default_sampler;
+		m_batch.texture = nullptr;
+		m_batch.offset = offset;
 	}
 }
 
@@ -59,6 +64,7 @@ void Batcher::clear() {
 	m_matrix = glm::mat3x2(1.0);
 	m_vertices.clear();
 	m_indices.clear();
+	m_batches_rendered = 0;
 
 	m_batch = Batch{};
 	m_batch.elements = 0;
@@ -105,9 +111,9 @@ void Batcher::render(const Ref<Target> &target, const glm::mat4 &matrix) {
 	upload();
 
 	// render batches
-	for (const auto& m_batch : m_batches) {
+	for (const auto& batch : m_batches) {
 		// render the batch
-		render_batch(target, m_batch, matrix);
+		render_batch(target, batch, matrix);
 	}
 
 	// draw remaining elements in the current batch
@@ -186,15 +192,14 @@ void Batcher::render_batch(const Ref<Target>& target, const Batch& batch, const 
 		.mesh_index_count = batch.elements * 3,
 	};
 
+	m_batches_rendered++;
 	cmd.submit();
 }
 
 void Batcher::set_texture(const Ref<Texture> &texture) {
 	// if the current batch has draw data & doesn't use the desired texture, begin a new batch
-	if (m_batch.has_elements() && texture != m_batch.texture) {
-		m_batches.emplace_back(m_batch);
-		m_batch = Batch{};
-	}
+	if (m_batch.has_elements() && texture != m_batch.texture)
+		new_batch();
 
 	// assign the texture to the current batch
 	m_batch.texture = texture;
@@ -202,10 +207,8 @@ void Batcher::set_texture(const Ref<Texture> &texture) {
 
 void Batcher::set_sampler(const TextureSampler& sampler) {
 	// if the current batch has draw data & doesn't use the desired sampler (or the default one), begin a new batch
-	if (m_batch.has_elements() && sampler != m_batch.sampler && m_batch.sampler != m_default_sampler) {
-		m_batches.emplace_back(m_batch);
-		m_batch = Batch{};
-	}
+	if (m_batch.has_elements() && sampler != m_batch.sampler && m_batch.sampler != m_default_sampler)
+		new_batch();
 
 	// assign the sampler to the current batch
 	m_batch.sampler = sampler;
@@ -213,10 +216,8 @@ void Batcher::set_sampler(const TextureSampler& sampler) {
 
 void Batcher::set_material(const Ref<Material>& material) {
 	// if the current batch has draw data & doesn't use the desired material, begin a new batch
-	if (m_batch.has_elements()) {
-		m_batches.emplace_back(m_batch);
-		m_batch = Batch{};
-	}
+	if (m_batch.has_elements())
+		new_batch();
 
 	// assign the material to the current batch
 	m_batch.material = material;

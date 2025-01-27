@@ -84,11 +84,6 @@ namespace Ember
 		 */
 		void line(const glm::vec2& from, const glm::vec2& to, float line_width, Color c = Color::White);
 
-		// TODO: Move this to private once the stack management functions are implemented
-		void set_texture(const Ref<Texture>& texture);
-		void set_sampler(const TextureSampler& sampler);
-		void set_material(const Ref<Material>& material);
-
 	private:
 		struct Batch
 		{
@@ -116,6 +111,9 @@ namespace Ember
 			}
 		};
 
+		void set_texture(const Ref<Texture>& texture);
+		void set_sampler(const TextureSampler& sampler);
+		void set_material(const Ref<Material>& material);
 		void render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix);
 
 		Batch						m_batch;
@@ -130,5 +128,6 @@ namespace Ember
 		Ref<Shader>					m_default_shader;
 		TextureSampler				m_default_sampler;
 		bool						m_mesh_dirty = false;
+		u32							m_batches_rendered = 0;
 	};
 }

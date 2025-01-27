@@ -101,9 +101,9 @@ void RenderDeviceSDL::init(Window* window) {
 	m_initialized = true;
 
 	// create default texture
-	m_default_texture = create_texture(1, 1, TextureFormat::R8G8B8A8, nullptr);
+	m_default_texture = make_ref<Texture>(1, 1, TextureFormat::R8G8B8A8);
 	std::byte pixel[4] = { std::byte(255), std::byte(255), std::byte(255), std::byte(255) };
-	set_texture_data(m_default_texture, std::span(pixel, sizeof(pixel)));
+	m_default_texture->set_data(std::span(pixel, sizeof(pixel)));
 
 	// create framebuffer
 	auto window_size = window->size();
@@ -388,21 +388,12 @@ void RenderDeviceSDL::draw(DrawCommand cmd) {
 
 	// bind fragment samplers
 	if (shader.fragment().num_samplers > 0) {
-		auto default_texture_resource = m_textures.get(m_default_texture);
-
 		std::vector<SDL_GPUTextureSamplerBinding> samplers(shader.fragment().num_samplers);
 		for (u32 i = 0; i < shader.fragment().num_samplers; i++) {
-			if (auto& tex = mat->fragment_samplers()[i].texture; tex != nullptr) {
-				auto tex_resource = m_textures.get(tex->handle());
-				if (tex_resource) {
-					samplers[i].texture = tex_resource->texture;
-				} else {
-					samplers[i].texture = default_texture_resource->texture;
-				}
-			} else {
-				samplers[i].texture = default_texture_resource->texture;
-			}
+			auto tex = mat->fragment_samplers()[i].texture ? mat->fragment_samplers()[i].texture : m_default_texture.get();
+			auto res = m_textures.get(tex->handle());
 
+			samplers[i].texture = res->texture;
 			samplers[i].sampler = get_sampler(mat->fragment_samplers()[i].sampler);
 		}
 
