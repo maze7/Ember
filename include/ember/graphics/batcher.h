@@ -84,6 +84,18 @@ namespace Ember
 		 */
 		void line(const glm::vec2& from, const glm::vec2& to, float line_width, Color c = Color::White);
 
+		/**
+		 * Pushes a material to draw with. This clones the state of the Material,
+		 * so changing its state after pushing will not have an effect on the resulting draw.
+		 * @param material Material to be used for rendering
+		 */
+		void push_material(const Ref<Material>& material);
+
+		/**
+		 * Pops
+		 */
+		void pop_material();
+
 	private:
 		struct Batch
 		{

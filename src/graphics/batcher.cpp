@@ -38,8 +38,8 @@ Batcher::Batcher() : m_matrix(1.0f) {
 
 	m_default_sampler = TextureSampler{
 		.filter = TextureFilter::Linear,
-		.wrap_x = TextureWrap::Clamp,
-		.wrap_y = TextureWrap::Clamp,
+		.wrap_x = TextureWrap::Repeat,
+		.wrap_y = TextureWrap::Repeat,
 	};
 }
 
@@ -178,6 +178,24 @@ void Batcher::line(const glm::vec2& from, const glm::vec2& to, float line_width,
 	auto dir = normalize(to - from);
 	auto perp = glm::vec2(-dir.y, dir.x) * line_width * 0.5f;
 	quad(from + perp, from - perp, to - perp, to + perp, nullptr, c);
+}
+
+void Batcher::push_material(const Ref<Material> &material) {
+	// clone the material and push the copy to the stack
+	auto copy = make_ref<Material>(*material);
+	m_material_stack.push_back(copy);
+
+	// set the current material to the copy
+	set_material(copy);
+}
+
+void Batcher::pop_material() {
+	if (m_material_stack.empty()) {
+		set_material(m_default_material);
+	} else {
+		set_material(m_material_stack.back());
+		m_material_stack.pop_back();
+	}
 }
 
 void Batcher::render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix) {
