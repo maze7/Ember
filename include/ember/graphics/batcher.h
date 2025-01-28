@@ -92,9 +92,22 @@ namespace Ember
 		void push_material(const Ref<Material>& material);
 
 		/**
-		 * Pops
+		 * Pops a matrix from the stack, applying it to the current batch
+		 * (Or begins a new match if the current batch has elements)
 		 */
 		void pop_material();
+
+		/**
+		 * Pushes a matrix that will transform all future data
+		 * @param matrix Transform matrix
+		 * @param relative whether the matrix should be relative to the previously pushed transformations
+		 */
+		glm::mat3 push_matrix(const glm::mat3& matrix, bool relative = true);
+
+		/**
+		 * Pops a matrix from the top of the matrix stack.
+		 */
+		glm::mat3 pop_matrix();
 
 	private:
 		struct Batch
@@ -129,12 +142,12 @@ namespace Ember
 		void render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix);
 
 		Batch						m_batch;
-		glm::mat3x2					m_matrix;
+		glm::mat3					m_matrix;
 		Ref<Mesh<Vertex>>			m_mesh;
 		std::vector<u16>			m_indices;
 		std::vector<Vertex>			m_vertices;
 		std::vector<Batch>			m_batches;
-		std::vector<glm::mat3x2>	m_matrix_stack;
+		std::vector<glm::mat3>		m_matrix_stack;
 		std::vector<Ref<Material>>	m_material_stack;
 		Ref<Material>				m_default_material;
 		Ref<Shader>					m_default_shader;

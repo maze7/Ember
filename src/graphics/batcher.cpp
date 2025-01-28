@@ -198,6 +198,23 @@ void Batcher::pop_material() {
 	}
 }
 
+glm::mat3 Batcher::push_matrix(const glm::mat3& matrix, bool relative) {
+	m_matrix_stack.push_back(matrix);
+
+	if (relative)
+		m_matrix = matrix * m_matrix;
+	else
+		m_matrix = matrix;
+
+	return m_matrix;
+}
+
+glm::mat3 Batcher::pop_matrix() {
+	m_matrix_stack.pop_back();
+	m_matrix = m_matrix_stack.empty() ? glm::mat3(1.0) : m_matrix_stack.back();
+	return m_matrix;
+}
+
 void Batcher::render_batch(const Ref<Target>& target, const Batch& batch, const glm::mat4& matrix) {
 	batch.material->set("matrix", matrix);
 	batch.material->set_fragment_sampler(0, batch.texture.get(), batch.sampler);
