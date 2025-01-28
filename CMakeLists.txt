@@ -72,6 +72,8 @@ add_library(
     src/graphics/batcher.cpp
     src/graphics/blend.cpp
     include/ember/math/quad.h
+        include/ember/graphics/sub_texture.h
+        src/graphics/sub_texture.cpp
 )
 
 # add include directories to Ember library

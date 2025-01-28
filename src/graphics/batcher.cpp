@@ -121,12 +121,12 @@ void Batcher::render(const Ref<Target> &target, const glm::mat4 &matrix) {
 		render_batch(target, m_batch, matrix);
 }
 
-void Batcher::quad(const Rect<float>& q, const Ref<Texture>& texture, Color c) {
+void Batcher::quad(const Rectf& q, const Ref<Texture>& texture, Color c) {
 	quad(
 		q.position(),
-		{ q.x, q.y + q.height },
-		{ q.x + q.width, q.y + q.height },
-		{ q.x + q.width, q.y },
+		{ q.x, q.y + q.h },
+		{ q.x + q.w, q.y + q.h },
+		{ q.x + q.w, q.y },
 		texture,
 		c
 	);
@@ -172,6 +172,13 @@ void Batcher::quad(const glm::vec2& v0, const glm::vec2 &v1, const glm::vec2 &v2
 
     // Mark the mesh as dirty
     m_mesh_dirty = true;
+}
+
+void Batcher::quad(const glm::vec2 &v0, const glm::vec2 &v1, const glm::vec2 &v2, const glm::vec2 &v3,
+	const glm::vec2 &t0, const glm::vec2 &t1, const glm::vec2 &t2, const glm::vec2 &t3, const Ref<Texture> &texture,
+	Color c)
+{
+
 }
 
 void Batcher::line(const glm::vec2& from, const glm::vec2& to, float line_width, Color c) {

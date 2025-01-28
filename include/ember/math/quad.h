@@ -4,5 +4,5 @@
 
 namespace Ember
 {
-	using Quad = Rect<float>;
+	using Quad = Rectf;
 }

@@ -63,7 +63,7 @@ namespace Ember
 		 * @param quad 
 		 * @param c 
 		 */
-		void quad(const Rect<float>& quad, const Ref<Texture>& texture, Color c);
+		void quad(const Rectf& quad, const Ref<Texture>& texture, Color c);
 
 		/**
 		 * Renders a quad to the current Batch
@@ -74,6 +74,23 @@ namespace Ember
 		 * @param c
 		 */
 		void quad(const glm::vec2& v0, const glm::vec2& v1, const glm::vec2& v2, const glm::vec2& v3, const Ref<Texture>& texture = nullptr, Color c = Color::White);
+
+		/**
+		 * Renders a textured quad to the current batch, using the provided texture coordinates.
+		 * @param v0 top-left vertex position
+		 * @param v1 bottom-left vertex position
+		 * @param v2 bottom-right vertex position
+		 * @param v3 top-right vertex position
+		 * @param t0 texture coord 1
+		 * @param t1 texture coord 2
+		 * @param t2 texture coord 3
+		 * @param t3 texture coord 4
+		 * @param texture texture to be used
+		 * @param c color for all vertices
+		 */
+		void quad(const glm::vec2& v0, const glm::vec2& v1, const glm::vec2& v2, const glm::vec2& v3,
+		          const glm::vec2& t0, const glm::vec2& t1, const glm::vec2& t2, const glm::vec2& t3,
+		          const Ref<Texture>& texture, Color c = Color::White);
 
 		/**
 		 * Draws a line between two points

@@ -54,6 +54,8 @@ namespace Ember
 			render_device->set_texture_data(m_handle, data);
 		}
 
+		auto size() const { return m_size; }
+
 		static Ref<Texture> load(std::string_view path);
 
 	private:
