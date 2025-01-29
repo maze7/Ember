@@ -133,52 +133,43 @@ void Batcher::quad(const Rectf& q, const Ref<Texture>& texture, Color c) {
 }
 
 void Batcher::quad(const glm::vec2& v0, const glm::vec2 &v1, const glm::vec2 &v2, const glm::vec2 &v3, const Ref<Texture>& texture, Color c) {
-	if (texture)
-		set_texture(texture);
-
-    // Reserve memory upfront to avoid multiple reallocations
-    if (m_vertices.capacity() - m_vertices.size() < 4) {
-        m_vertices.reserve(m_vertices.size() * 2);
-    }
-    if (m_indices.capacity() - m_indices.size() < 6) {
-        m_indices.reserve(m_indices.size() * 2);
-    }
-
-    // Precomputed texture coordinates for a quad
-    static constexpr glm::vec2 tex_coords[4] = {
+    // precomputed texture coordinates for a quad
+    static constexpr glm::vec2 t[4] = {
         {0.0f, 0.0f}, // Top-left
         {0.0f, 1.0f}, // Bottom-left
         {1.0f, 1.0f}, // Bottom-right
         {1.0f, 0.0f}  // Top-right
     };
 
-    // Compute the starting index for this quad
-    u16 startIndex = static_cast<u16>(m_vertices.size());
-
-    // Add transformed vertices in clockwise order (top-left -> bottom-left -> bottom-right -> top-right)
-    m_vertices.push_back({m_matrix * glm::vec3(v0, 1.0f), tex_coords[0], c});
-    m_vertices.push_back({m_matrix * glm::vec3(v1, 1.0f), tex_coords[1], c});
-    m_vertices.push_back({m_matrix * glm::vec3(v2, 1.0f), tex_coords[2], c});
-    m_vertices.push_back({m_matrix * glm::vec3(v3, 1.0f), tex_coords[3], c});
-
-    // Add indices for the two triangles forming the quad
-    static const u16 quadIndices[6] = {0, 1, 2, 0, 2, 3};
-    for (u16 i : quadIndices) {
-        m_indices.push_back(startIndex + i);
-    }
-
-    // Update the batch element count
-    m_batch.elements += 2; // 2 triangles = 1 quad
-
-    // Mark the mesh as dirty
-    m_mesh_dirty = true;
+	quad(v0, v1, v2, v3, t[0], t[1], t[2], t[3], texture, c);
 }
 
 void Batcher::quad(const glm::vec2 &v0, const glm::vec2 &v1, const glm::vec2 &v2, const glm::vec2 &v3,
 	const glm::vec2 &t0, const glm::vec2 &t1, const glm::vec2 &t2, const glm::vec2 &t3, const Ref<Texture> &texture,
 	Color c)
 {
+	if (texture)
+		set_texture(texture);
 
+	u16 start_index = static_cast<u16>(m_vertices.size());
+
+	// add transformed vertices in counter-clockwise order (top-left, bottom-left, bottom-right, top-right)
+	m_vertices.push_back({ m_matrix * glm::vec3(v0, 1.0f) , t0, c });
+	m_vertices.push_back({ m_matrix * glm::vec3(v1, 1.0f), t1, c });
+	m_vertices.push_back({ m_matrix * glm::vec3(v2, 1.0f), t2, c });
+	m_vertices.push_back({ m_matrix * glm::vec3(v3, 1.0f), t3, c });
+
+
+	// add indices for the two triangles form the quad
+	static const u16 quad_indices[6] = { 0, 1, 2, 0, 2, 3 };
+	for (u16 i : quad_indices)
+		m_indices.push_back(start_index + i);
+
+	// update the batch element count
+	m_batch.elements += 2; // 2 triangles = 1 quad
+
+	// mark the mesh as dirty
+	m_mesh_dirty = true;
 }
 
 void Batcher::line(const glm::vec2& from, const glm::vec2& to, float line_width, Color c) {

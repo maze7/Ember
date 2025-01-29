@@ -43,13 +43,13 @@ void SubTexture::update() {
 
 SubTexture SubTexture::crop(const Rectf& clip) const
 {
-    // Rectf dest_source = (clip + source.top_left() + frame.top_left()).overlap_rect(source);
-    //
-    // Rectf dest_frame;
-    // dest_frame.x = Calc::min(0.0f, frame.x + clip.x);
-    // dest_frame.y = Calc::min(0.0f, frame.y + clip.y);
-    // dest_frame.w = clip.w;
-    // dest_frame.h = clip.h;
-    //
-    // return SubTexture(texture, dest_source, dest_frame);
+    Rectf dest_source = (clip + source.top_left() + frame.top_left()).overlap_rect(source);
+
+    Rectf dest_frame;
+    dest_frame.x = Math::min(0.0f, frame.x + clip.x);
+    dest_frame.y = Math::min(0.0f, frame.y + clip.y);
+    dest_frame.w = clip.w;
+    dest_frame.h = clip.h;
+
+    return { texture, dest_source, dest_frame };
 }

@@ -4,6 +4,8 @@
 
 namespace Ember::Math
 {
+	static constexpr double EPSILON = 0.000001;
+
 	template<class T>
 	constexpr T abs(T x) {
 		return x < 0 ? -x : x;
