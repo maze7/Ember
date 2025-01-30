@@ -106,7 +106,7 @@ bool Window::poll_events(InputState& state) {
 				else if (event.button.button == SDL_BUTTON_MIDDLE)
 					btn = MouseButton::Middle;
 
-				state.mouse.on_button(btn, event.type);
+				state.mouse.on_button(btn, event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
 			}
 			case SDL_EVENT_MOUSE_WHEEL:
 				state.mouse.on_wheel({ event.wheel.x, event.wheel.y });

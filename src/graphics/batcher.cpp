@@ -173,6 +173,8 @@ void Batcher::quad(const glm::vec2 &v0, const glm::vec2 &v1, const glm::vec2 &v2
 }
 
 void Batcher::line(const glm::vec2& from, const glm::vec2& to, float line_width, Color c) {
+	set_texture(nullptr);
+
 	auto dir = normalize(to - from);
 	auto perp = glm::vec2(-dir.y, dir.x) * line_width * 0.5f;
 	quad(from + perp, from - perp, to - perp, to + perp, nullptr, c);
