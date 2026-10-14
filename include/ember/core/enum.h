@@ -6,6 +6,7 @@
 // placed.
 
 #include <cstddef>
+#include <type_traits>
 
 namespace Ember
 {
@@ -47,15 +48,82 @@ namespace Ember
 			    "EMBER_ENUM_NAMES: name count mismatch!");
 		}
 	}
-}
 
 // Names an enum's values for enum_name and for JSON serialization. Place it in the Ember namespace,
 // at global scope, or in the enum's own namespace: ADL on EnumTag finds it from any of those.
 #define EMBER_ENUM_NAMES(Type, ...)                                                                \
-	constexpr auto ember_enum_names(::Ember::EnumTag<Type>) noexcept                               \
+	constexpr auto enum_names(::Ember::EnumTag<Type>) noexcept                                     \
 	{                                                                                              \
 		constexpr const char* raw[] = {__VA_ARGS__};                                               \
 		constexpr auto arr = std::to_array(raw);                                                   \
 		::Ember::check_enum_count<Type, arr.size()>();                                             \
 		return arr;                                                                                \
+	}
+}
+
+// Bitwise operator for an enum class that names a set of flags. A scoped enum comes with no
+// operators at all, which is right for an enum that names one of several things and wrong for one
+// that names any combination of them. This macro opts an enum into the second kind. Call it in the
+// enum's own namespace, right after the enum, so that argument-dependent lookup finds the operators
+// wherever a value of the enum is used.
+#define EMBER_ENUM_BITWISE_OPS(EnumType)                                                           \
+	static_assert(std::is_enum_v<EnumType>, "EMBER_ENUM_BITWISE_OPS needs an enum");               \
+                                                                                                   \
+	[[nodiscard]] constexpr EnumType operator|(EnumType lhs, EnumType rhs) noexcept                \
+	{                                                                                              \
+		using U = std::underlying_type_t<EnumType>;                                                \
+		return static_cast<EnumType>(static_cast<U>(lhs) | static_cast<U>(rhs));                   \
+	}                                                                                              \
+                                                                                                   \
+	[[nodiscard]] constexpr EnumType operator&(EnumType lhs, EnumType rhs) noexcept                \
+	{                                                                                              \
+		using U = std::underlying_type_t<EnumType>;                                                \
+		return static_cast<EnumType>(static_cast<U>(lhs) & static_cast<U>(rhs));                   \
+	}                                                                                              \
+                                                                                                   \
+	[[nodiscard]] constexpr EnumType operator^(EnumType lhs, EnumType rhs) noexcept                \
+	{                                                                                              \
+		using U = std::underlying_type_t<EnumType>;                                                \
+		return static_cast<EnumType>(static_cast<U>(lhs) ^ static_cast<U>(rhs));                   \
+	}                                                                                              \
+                                                                                                   \
+	[[nodiscard]] constexpr EnumType operator~(EnumType value) noexcept                            \
+	{                                                                                              \
+		using U = std::underlying_type_t<EnumType>;                                                \
+		return static_cast<EnumType>(~static_cast<U>(value));                                      \
+	}                                                                                              \
+                                                                                                   \
+	constexpr EnumType& operator|=(EnumType& lhs, EnumType rhs) noexcept                           \
+	{                                                                                              \
+		return lhs = lhs | rhs;                                                                    \
+	}                                                                                              \
+                                                                                                   \
+	constexpr EnumType& operator&=(EnumType& lhs, EnumType rhs) noexcept                           \
+	{                                                                                              \
+		return lhs = lhs & rhs;                                                                    \
+	}                                                                                              \
+                                                                                                   \
+	constexpr EnumType& operator^=(EnumType& lhs, EnumType rhs) noexcept                           \
+	{                                                                                              \
+		return lhs = lhs ^ rhs;                                                                    \
+	}                                                                                              \
+                                                                                                   \
+	[[nodiscard]] constexpr bool any(EnumType value) noexcept                                      \
+	{                                                                                              \
+		return static_cast<std::underlying_type_t<EnumType>>(value) != 0;                          \
+	}                                                                                              \
+                                                                                                   \
+	[[nodiscard]] constexpr bool none(EnumType value) noexcept                                     \
+	{                                                                                              \
+		return !any(value);                                                                        \
+	}                                                                                              \
+                                                                                                   \
+	[[nodiscard]] constexpr bool has_any(EnumType value, EnumType flags) noexcept                  \
+	{                                                                                              \
+		return any(value & flags);                                                                 \
+	}                                                                                              \
+                                                                                                   \
+	[[nodiscard]] constexpr bool has_all(EnumType value, EnumType flags) noexcept                  \
+	{                                                                                              \
+		return (value & flags) == flags;                                                           \
 	}
