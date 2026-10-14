@@ -140,75 +140,75 @@ namespace Ember
 		constexpr Span(const Span&) noexcept = default;
 		constexpr Span& operator=(const Span&) noexcept = default;
 
-		[[nodiscard]] EMBER_FINLINE constexpr pointer data() const noexcept
+		EMBER_FINLINE constexpr pointer data() const noexcept
 		{
 			return m_data;
 		}
 
-		[[nodiscard]] EMBER_FINLINE constexpr size_type size() const noexcept
+		EMBER_FINLINE constexpr size_type size() const noexcept
 		{
 			return m_size;
 		}
 
-		[[nodiscard]] EMBER_FINLINE constexpr size_type size_bytes() const noexcept
+		EMBER_FINLINE constexpr size_type size_bytes() const noexcept
 		{
 			return m_size * sizeof(T);
 		}
 
-		[[nodiscard]] EMBER_FINLINE constexpr bool empty() const noexcept
+		EMBER_FINLINE constexpr bool empty() const noexcept
 		{
 			return m_size == 0;
 		}
 
 		// Element access requires a valid index. front() and back() require a nonempty span. These
 		// preconditions are checked when assertions are enabled.
-		[[nodiscard]] EMBER_FINLINE constexpr reference operator[](size_type index) const noexcept
+		EMBER_FINLINE constexpr reference operator[](size_type index) const noexcept
 		{
 			EMBER_ASSERT(index < m_size);
 			return m_data[index];
 		}
 
-		[[nodiscard]] EMBER_FINLINE constexpr reference front() const noexcept
+		EMBER_FINLINE constexpr reference front() const noexcept
 		{
 			EMBER_ASSERT(m_size != 0);
 			return m_data[0];
 		}
 
-		[[nodiscard]] EMBER_FINLINE constexpr reference back() const noexcept
+		EMBER_FINLINE constexpr reference back() const noexcept
 		{
 			EMBER_ASSERT(m_size != 0);
 			return m_data[m_size - 1];
 		}
 
-		[[nodiscard]] EMBER_FINLINE constexpr iterator begin() const noexcept
+		EMBER_FINLINE constexpr iterator begin() const noexcept
 		{
 			return m_data;
 		}
 
-		[[nodiscard]] EMBER_FINLINE constexpr iterator end() const noexcept
+		EMBER_FINLINE constexpr iterator end() const noexcept
 		{
 			return m_data + m_size;
 		}
 
-		[[nodiscard]] EMBER_FINLINE constexpr reverse_iterator rbegin() const noexcept
+		EMBER_FINLINE constexpr reverse_iterator rbegin() const noexcept
 		{
 			return reverse_iterator(end());
 		}
 
-		[[nodiscard]] EMBER_FINLINE constexpr reverse_iterator rend() const noexcept
+		EMBER_FINLINE constexpr reverse_iterator rend() const noexcept
 		{
 			return reverse_iterator(begin());
 		}
 
 		// Returns a view of the first [count] elements. [count] must not exceed size().
-		[[nodiscard]] EMBER_FINLINE constexpr Span first(size_type count) const noexcept
+		EMBER_FINLINE constexpr Span first(size_type count) const noexcept
 		{
 			EMBER_ASSERT(count <= m_size);
 			return Span(m_data, count);
 		}
 
 		// Returns a view of the last [count] elements. [count] must not exceed size().
-		[[nodiscard]] EMBER_FINLINE constexpr Span last(size_type count) const noexcept
+		EMBER_FINLINE constexpr Span last(size_type count) const noexcept
 		{
 			EMBER_ASSERT(count <= m_size);
 			return Span(m_data + (m_size - count), count);
@@ -216,8 +216,7 @@ namespace Ember
 
 		// Returns [count] elements starting at [offset]. [offset] may equal size(), but [count]
 		// must fit within the remaining elements.
-		[[nodiscard]] EMBER_FINLINE constexpr Span subspan(size_type offset,
-		    size_type count) const noexcept
+		EMBER_FINLINE constexpr Span subspan(size_type offset, size_type count) const noexcept
 		{
 			EMBER_ASSERT(offset <= m_size);
 
@@ -229,7 +228,7 @@ namespace Ember
 		}
 
 		// Returns the elements from [offset] to the end. [offset] must not exceed size().
-		[[nodiscard]] EMBER_FINLINE constexpr Span subspan(size_type offset) const noexcept
+		EMBER_FINLINE constexpr Span subspan(size_type offset) const noexcept
 		{
 			EMBER_ASSERT(offset <= m_size);
 			return Span(m_data + offset, m_size - offset);
@@ -264,7 +263,7 @@ namespace Ember
 	// Views the elements' object representation without copying. The returned span borrows the same
 	// storage.
 	template <typename T>
-	[[nodiscard]] EMBER_FINLINE Span<const std::byte> as_bytes(Span<T> s) noexcept
+	EMBER_FINLINE Span<const std::byte> as_bytes(Span<T> s) noexcept
 	{
 		return Span<const std::byte>(reinterpret_cast<const std::byte*>(s.data()), s.size_bytes());
 	}
@@ -273,7 +272,7 @@ namespace Ember
 	// bypass their constness.
 	template <typename T>
 	    requires(!std::is_const_v<T>)
-	[[nodiscard]] EMBER_FINLINE Span<std::byte> as_writable_bytes(Span<T> s) noexcept
+	EMBER_FINLINE Span<std::byte> as_writable_bytes(Span<T> s) noexcept
 	{
 		return Span<std::byte>(reinterpret_cast<std::byte*>(s.data()), s.size_bytes());
 	}
