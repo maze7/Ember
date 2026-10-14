@@ -1,15 +1,15 @@
 #pragma once
 
-#include <ember/core/logger.h>
+#include <ember/core/log.h>
 
 #ifdef EMBER_HAS_PLATFORM
-#include <ember/platform/app.h>
+	#include <ember/platform/app.h>
 #endif
 
 #ifdef EMBER_HAS_GRAPHICS
-#include <ember/graphics/renderer.h>
+	#include <ember/graphics/renderer.h>
 #endif
 
 #ifdef EMBER_HAS_AUDIO
-#include <ember/audio/device.h>
+	#include <ember/audio/device.h>
 #endif

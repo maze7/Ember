@@ -4,21 +4,20 @@
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyC.h>
 
-// Wraps the Tracy client so engine and game code never include tracy headers directly.
-// Tracy's own headers compile every macro to nothing unless TRACY_ENABLE is defined,
-// so instrumentation can (and should) be left in shipping code paths.
+// Wraps the Tracy client so engine and game code never include tracy headers directly. Tracy's own
+// headers compile every macro to nothing unless TRACY_ENABLE is defined, so instrumentation can
+// (and should) be left in shipping code paths.
 //
-// Activation is automatic; Ember's CMake sets TRACY_ENABLE from EMBER_USE_TRACY and
-// TRACY_FIBERS from EMBER_TRACE_FIBERS
+// Activation is automatic; Ember's CMake sets TRACY_ENABLE from EMBER_USE_TRACY and TRACY_FIBERS
+// from EMBER_TRACE_FIBERS
 //
 // Rules of use:
-// 	- One zone macro (SCOPE / FUNCTION) per C++ scope. Open a nested { } block for finer
-// 	  grained zones.
+// 	- One zone macro (SCOPE / FUNCTION) per C++ scope. Open a nested block for finer grained zones.
 //  - Name strings passed to SCOPE and FRAME macros must be string literals.
 namespace Ember
 {
-	// A zone held in a variable instead of a scope, for spans that begin and end in
-	// different functions. Begin and end must run on the same thread.
+	// A zone held in a variable instead of a scope, for spans that begin and end in different
+	// functions. Begin and end must run on the same thread.
 	using ProfileZone = TracyCZoneCtx;
 
 	// 0xRRGGBB zone colors, one per subsystem, for readable captures.
@@ -36,8 +35,8 @@ namespace Ember
 // Frame boundary. Call once per frame, after swapchain present.
 #define EMBER_PROFILE_FRAME() FrameMark
 
-// CPU zones (RAII, closes at the end of enclosing scope). ZONE_NAME attaches runtime text
-// to the innermost open zone.
+// CPU zones (RAII, closes at the end of enclosing scope). ZONE_NAME attaches runtime text to the
+// innermost open zone.
 #define EMBER_PROFILE_FUNCTION() ZoneScoped
 #define EMBER_PROFILE_FUNCTION_C(color) ZoneScopedC(color)
 #define EMBER_PROFILE_SCOPE(name) ZoneScopedN(name)
