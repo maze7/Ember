@@ -1,0 +1,10 @@
+ember_add_module(core
+	SOURCES
+		core/assert.cpp
+		core/logger.cpp
+	PUBLIC_DEPS
+		fmt::fmt
+		tl::expected
+		unordered_dense::unordered_dense
+		$<$<BOOL:${EMBER_ENABLE_PROFILING}>:Tracy::TracyClient>
+)

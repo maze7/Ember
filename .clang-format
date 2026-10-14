@@ -1,0 +1,38 @@
+Language: Cpp
+BasedOnStyle: LLVM
+BreakBeforeBraces: Allman
+ColumnLimit: 100
+
+# Tabs for indentation only; continuation lines are padded with spaces, so
+# they look the same at every tab width instead of drifting.
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 4
+IndentPPDirectives: BeforeHash
+NamespaceIndentation: All
+AccessModifierOffset: -4
+IndentCaseLabels: true
+
+# One shape for every declaration: template parameters on their own line,
+# every function body on its own lines, no one-line ifs or loops.
+BreakTemplateDeclarations: Yes
+AllowShortFunctionsOnASingleLine: None
+AllowShortLambdasOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# No column alignment anywhere. Wrapped arguments break after a comma and
+# continue a fixed four columns in, never aligned under the open paren.
+AlignConsecutiveAssignments: "None"
+AlignConsecutiveDeclarations: "None"
+AlignAfterOpenBracket: DontAlign
+AllowAllArgumentsOnNextLine: false
+BinPackArguments: true
+AlignEscapedNewlines: Right
+
+# * and & on type side
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+FixNamespaceComments: false
