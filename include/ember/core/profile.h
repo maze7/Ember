@@ -14,7 +14,7 @@
 // Rules of use:
 // 	- One zone macro (SCOPE / FUNCTION) per C++ scope. Open a nested block for finer grained zones.
 //  - Name strings passed to SCOPE and FRAME macros must be string literals.
-namespace Ember
+namespace ember
 {
 	// A zone held in a variable instead of a scope, for spans that begin and end in different
 	// functions. Begin and end must run on the same thread.
@@ -42,3 +42,8 @@ namespace Ember
 #define EMBER_PROFILE_SCOPE(name) ZoneScopedN(name)
 #define EMBER_PROFILE_SCOPE_C(name, color) ZoneScopedNC(name, color)
 #define EMBER_PROFILE_ZONE_NAME(txt, size) ZoneName(txt, size)
+
+// Memory events, attributed to a named pool so Tracy's memory view shows each category or
+// allocator on its own. The name must be a string literal, or otherwise live for the whole run.
+#define EMBER_PROFILE_ALLOC(ptr, size, name) TracyAllocN(ptr, size, name)
+#define EMBER_PROFILE_FREE(ptr, name) TracyFreeN(ptr, name)

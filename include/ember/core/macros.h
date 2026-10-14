@@ -75,7 +75,21 @@ static_assert((EMBER_CACHE_LINE & (EMBER_CACHE_LINE - 1)) == 0,
 	#define EMBER_ASSERTS_ENABLED 0
 #endif
 
-namespace Ember
+// How much the memory module records about heap traffic. Level 1 counts bytes per category,
+// warns when a budget is crossed and feeds Tracy; level 2 adds poison fills and breaking on an
+// allocation by number. Debug builds get 2, profiling builds 1 and shipping builds 0, and a
+// build may set its own level.
+#ifndef EMBER_MEMORY_TRACKING
+	#if !defined(NDEBUG)
+		#define EMBER_MEMORY_TRACKING 2
+	#elif defined(EMBER_PROFILE)
+		#define EMBER_MEMORY_TRACKING 1
+	#else
+		#define EMBER_MEMORY_TRACKING 0
+	#endif
+#endif
+
+namespace ember
 {
 	// Reports an assertion failure. Returns true if the caller should break into the debugger. Only
 	// [message] may be null.
@@ -97,7 +111,7 @@ namespace Ember
 		{                                                                                          \
 			if (!(expr))                                                                           \
 			{                                                                                      \
-				if (::Ember::assert_fail(#expr, message, __FILE__, __LINE__, __FUNCTION__))        \
+				if (::ember::assert_fail(#expr, message, __FILE__, __LINE__, __FUNCTION__))        \
 				{                                                                                  \
 					EMBER_DEBUG_BREAK();                                                           \
 				}                                                                                  \

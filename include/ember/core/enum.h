@@ -5,10 +5,11 @@
 // ember_enum_names taking that tag, and the helpers below find it from wherever the macro was
 // placed.
 
+#include <array> // IWYU pragma: keep
 #include <cstddef>
-#include <type_traits>
+#include <type_traits> // IWYU pragma: keep
 
-namespace Ember
+namespace ember
 {
 	// Empty tag type used only to select the right ember_enum_names overload.
 	template <typename T>
@@ -52,11 +53,11 @@ namespace Ember
 // Names an enum's values for enum_name and for JSON serialization. Place it in the Ember namespace,
 // at global scope, or in the enum's own namespace: ADL on EnumTag finds it from any of those.
 #define EMBER_ENUM_NAMES(Type, ...)                                                                \
-	constexpr auto enum_names(::Ember::EnumTag<Type>) noexcept                                     \
+	constexpr auto ember_enum_names(::ember::EnumTag<Type>) noexcept                               \
 	{                                                                                              \
 		constexpr const char* raw[] = {__VA_ARGS__};                                               \
 		constexpr auto arr = std::to_array(raw);                                                   \
-		::Ember::check_enum_count<Type, arr.size()>();                                             \
+		::ember::check_enum_count<Type, arr.size()>();                                             \
 		return arr;                                                                                \
 	}
 }
@@ -69,48 +70,48 @@ namespace Ember
 #define EMBER_ENUM_BITWISE_OPS(EnumType)                                                           \
 	static_assert(std::is_enum_v<EnumType>, "EMBER_ENUM_BITWISE_OPS needs an enum");               \
                                                                                                    \
-	[[nodiscard]] constexpr EnumType operator|(EnumType lhs, EnumType rhs) noexcept                \
+	[[nodiscard]] constexpr(EnumType) operator|(EnumType lhs, EnumType rhs) noexcept               \
 	{                                                                                              \
 		using U = std::underlying_type_t<EnumType>;                                                \
 		return static_cast<EnumType>(static_cast<U>(lhs) | static_cast<U>(rhs));                   \
 	}                                                                                              \
                                                                                                    \
-	[[nodiscard]] constexpr EnumType operator&(EnumType lhs, EnumType rhs) noexcept                \
+	[[nodiscard]] constexpr(EnumType) operator&(EnumType lhs, EnumType rhs) noexcept               \
 	{                                                                                              \
 		using U = std::underlying_type_t<EnumType>;                                                \
 		return static_cast<EnumType>(static_cast<U>(lhs) & static_cast<U>(rhs));                   \
 	}                                                                                              \
                                                                                                    \
-	[[nodiscard]] constexpr EnumType operator^(EnumType lhs, EnumType rhs) noexcept                \
+	[[nodiscard]] constexpr(EnumType) operator^(EnumType lhs, EnumType rhs) noexcept               \
 	{                                                                                              \
 		using U = std::underlying_type_t<EnumType>;                                                \
 		return static_cast<EnumType>(static_cast<U>(lhs) ^ static_cast<U>(rhs));                   \
 	}                                                                                              \
                                                                                                    \
-	[[nodiscard]] constexpr EnumType operator~(EnumType value) noexcept                            \
+	[[nodiscard]] constexpr(EnumType) operator~(EnumType value) noexcept                           \
 	{                                                                                              \
 		using U = std::underlying_type_t<EnumType>;                                                \
 		return static_cast<EnumType>(~static_cast<U>(value));                                      \
 	}                                                                                              \
                                                                                                    \
-	constexpr EnumType& operator|=(EnumType& lhs, EnumType rhs) noexcept                           \
+	constexpr(EnumType) & operator|=((EnumType) & lhs, EnumType rhs) noexcept                      \
 	{                                                                                              \
 		return lhs = lhs | rhs;                                                                    \
 	}                                                                                              \
                                                                                                    \
-	constexpr EnumType& operator&=(EnumType& lhs, EnumType rhs) noexcept                           \
+	constexpr(EnumType) & operator&=((EnumType) & lhs, EnumType rhs) noexcept                      \
 	{                                                                                              \
 		return lhs = lhs & rhs;                                                                    \
 	}                                                                                              \
                                                                                                    \
-	constexpr EnumType& operator^=(EnumType& lhs, EnumType rhs) noexcept                           \
+	constexpr(EnumType) & operator^=((EnumType) & lhs, EnumType rhs) noexcept                      \
 	{                                                                                              \
 		return lhs = lhs ^ rhs;                                                                    \
 	}                                                                                              \
                                                                                                    \
 	[[nodiscard]] constexpr bool any(EnumType value) noexcept                                      \
 	{                                                                                              \
-		return static_cast<std::underlying_type_t<EnumType>>(value) != 0;                          \
+		return static_cast<std::underlying_type_t<(EnumType)>>(value) != 0;                        \
 	}                                                                                              \
                                                                                                    \
 	[[nodiscard]] constexpr bool none(EnumType value) noexcept                                     \

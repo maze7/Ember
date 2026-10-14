@@ -12,7 +12,7 @@
 #include "ember/core/macros.h"
 #include "ember/core/types.h"
 
-namespace Ember
+namespace ember
 {
 	// One shape for every handle in the engine: a u32 holding a 20-bit index and a 12-bit
 	// generation. Twenty bits address 1,048,575 slots, twelve bits means a slot's generation wraps

@@ -10,7 +10,7 @@
 
 #include <ankerl/unordered_dense.h>
 
-namespace Ember
+namespace ember
 {
 	template <typename K, typename V, typename Hash = ankerl::unordered_dense::hash<K>>
 	using HashMap = ankerl::unordered_dense::pmr::map<K, V, Hash>;
@@ -27,13 +27,13 @@ namespace ankerl::unordered_dense
 	// mixing it applies to hashes it does not trust. It lives here rather than in handle.h so that
 	// handle.h, which everything includes, does not have to include a hash library.
 	template <typename Tag>
-	struct hash<Ember::Handle<Tag>>
+	struct hash<ember::Handle<Tag>>
 	{
 		using is_avalanching = void;
 
-		[[nodiscard]] Ember::u64 operator()(Ember::Handle<Tag> handle) const noexcept
+		[[nodiscard]] ember::u64 operator()(ember::Handle<Tag> handle) const noexcept
 		{
-			return hash<Ember::u32>{}(handle.bits);
+			return hash<ember::u32>{}(handle.bits);
 		}
 	};
 }

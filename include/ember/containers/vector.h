@@ -2,7 +2,7 @@
 
 #include <vector>
 
-namespace Ember
+namespace ember
 {
 	// Ember uses polymorphic-allocator (PMR) containers, so the allocator is chosen at runtime by
 	// whoever owns the data rather than baked into the type. These aliases hide the std::pmr::

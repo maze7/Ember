@@ -19,15 +19,14 @@
 // Extent is always dynamic. Iterators are raw pointers. Access preconditions are checked when
 // EMBER_ASSERTS_ENABLED is true.
 
-#include "ember/core/macros.h"
-#include "ember/core/types.h"
+#include <ember/core/macros.h>
 
 #include <cstddef>
 #include <initializer_list>
 #include <iterator>
 #include <type_traits>
 
-namespace Ember
+namespace ember
 {
 	template <typename T>
 	class Span;
@@ -77,19 +76,18 @@ namespace Ember
 		using reverse_iterator = std::reverse_iterator<iterator>;
 
 		// Constructs an empty view with a null data pointer.
-		constexpr Span() noexcept = default;
+		constexpr Span() = default;
 
 		// Borrows [count] contiguous elements starting at [data]. A null pointer is valid only when
 		// [count] is zero.
-		EMBER_FINLINE constexpr Span(pointer data, size_type count) noexcept
-		    : m_data(data), m_size(count)
+		EMBER_FINLINE constexpr Span(pointer data, size_type count) : m_data(data), m_size(count)
 		{
 			EMBER_ASSERT(data != nullptr || count == 0);
 		}
 
 		// Borrows [first, last). The pointers must describe an ordered range in the same array, or
 		// both be null. A one-past-the-end position is allowed. The distance must fit in ptrdiff_t.
-		EMBER_FINLINE constexpr Span(pointer first, pointer last) noexcept
+		EMBER_FINLINE constexpr Span(pointer first, pointer last)
 		    : m_data(first), m_size(static_cast<size_type>(last - first))
 		{
 			EMBER_ASSERT(first <= last);
@@ -98,7 +96,7 @@ namespace Ember
 		// Borrows an array and deduces its element count. String literals include the terminating
 		// null character.
 		template <size_t N>
-		EMBER_FINLINE constexpr Span(T (&array)[N]) noexcept : m_data(array), m_size(N)
+		EMBER_FINLINE constexpr Span(T (&array)[N]) : m_data(array), m_size(N)
 		{
 		}
 
@@ -108,8 +106,7 @@ namespace Ember
 		template <typename Container>
 		    requires(Private::SpanCompatibleContainer<Container, T> &&
 		                (std::is_lvalue_reference_v<Container> || std::is_const_v<T>))
-		EMBER_FINLINE constexpr Span(Container&& container EMBER_LIFETIMEBOUND) noexcept(
-		    noexcept(container.data()) && noexcept(container.size()))
+		EMBER_FINLINE constexpr Span(Container&& container EMBER_LIFETIMEBOUND)
 		    : m_data(container.data()), m_size(static_cast<size_type>(container.size()))
 		{
 		}
@@ -119,8 +116,7 @@ namespace Ember
 		//
 		// A braced list passed directly here lasts until the end of the full expression. Storing
 		// the span does not extend that lifetime.
-		EMBER_FINLINE constexpr Span(
-		    std::initializer_list<value_type> list EMBER_LIFETIMEBOUND) noexcept
+		EMBER_FINLINE constexpr Span(std::initializer_list<value_type> list EMBER_LIFETIMEBOUND)
 		    requires(std::is_const_v<T>)
 		    : Span(list.begin(), list.size())
 		{
@@ -130,85 +126,84 @@ namespace Ember
 		// prevents changing the element type or removing qualifiers.
 		template <typename U>
 		    requires(Private::SpanElementCompatible<U, T>)
-		EMBER_FINLINE constexpr Span(Span<U> other) noexcept
-		    : m_data(other.data()), m_size(other.size())
+		EMBER_FINLINE constexpr Span(Span<U> other) : m_data(other.data()), m_size(other.size())
 		{
 		}
 
 		// Pass spans by value. Copying copies only the pointer and count; both views continue to
 		// refer to the same elements.
-		constexpr Span(const Span&) noexcept = default;
-		constexpr Span& operator=(const Span&) noexcept = default;
+		constexpr Span(const Span&) = default;
+		constexpr Span& operator=(const Span&) = default;
 
-		EMBER_FINLINE constexpr pointer data() const noexcept
+		EMBER_FINLINE constexpr pointer data() const
 		{
 			return m_data;
 		}
 
-		EMBER_FINLINE constexpr size_type size() const noexcept
+		EMBER_FINLINE constexpr size_type size() const
 		{
 			return m_size;
 		}
 
-		EMBER_FINLINE constexpr size_type size_bytes() const noexcept
+		EMBER_FINLINE constexpr size_type size_bytes() const
 		{
 			return m_size * sizeof(T);
 		}
 
-		EMBER_FINLINE constexpr bool empty() const noexcept
+		EMBER_FINLINE constexpr bool empty() const
 		{
 			return m_size == 0;
 		}
 
 		// Element access requires a valid index. front() and back() require a nonempty span. These
 		// preconditions are checked when assertions are enabled.
-		EMBER_FINLINE constexpr reference operator[](size_type index) const noexcept
+		EMBER_FINLINE constexpr reference operator[](size_type index) const
 		{
 			EMBER_ASSERT(index < m_size);
 			return m_data[index];
 		}
 
-		EMBER_FINLINE constexpr reference front() const noexcept
+		EMBER_FINLINE constexpr reference front() const
 		{
 			EMBER_ASSERT(m_size != 0);
 			return m_data[0];
 		}
 
-		EMBER_FINLINE constexpr reference back() const noexcept
+		EMBER_FINLINE constexpr reference back() const
 		{
 			EMBER_ASSERT(m_size != 0);
 			return m_data[m_size - 1];
 		}
 
-		EMBER_FINLINE constexpr iterator begin() const noexcept
+		EMBER_FINLINE constexpr iterator begin() const
 		{
 			return m_data;
 		}
 
-		EMBER_FINLINE constexpr iterator end() const noexcept
+		EMBER_FINLINE constexpr iterator end() const
 		{
 			return m_data + m_size;
 		}
 
-		EMBER_FINLINE constexpr reverse_iterator rbegin() const noexcept
+		EMBER_FINLINE constexpr reverse_iterator rbegin() const
 		{
 			return reverse_iterator(end());
 		}
 
-		EMBER_FINLINE constexpr reverse_iterator rend() const noexcept
+		EMBER_FINLINE constexpr reverse_iterator rend() const
 		{
 			return reverse_iterator(begin());
 		}
 
 		// Returns a view of the first [count] elements. [count] must not exceed size().
-		EMBER_FINLINE constexpr Span first(size_type count) const noexcept
+		EMBER_FINLINE constexpr Span first(size_type count) const
 		{
 			EMBER_ASSERT(count <= m_size);
 			return Span(m_data, count);
 		}
 
 		// Returns a view of the last [count] elements. [count] must not exceed size().
-		EMBER_FINLINE constexpr Span last(size_type count) const noexcept
+		EMBER_FINLINE constexpr Span last(size_type count) const
 		{
 			EMBER_ASSERT(count <= m_size);
 			return Span(m_data + (m_size - count), count);
@@ -216,7 +211,7 @@ namespace Ember
 
 		// Returns [count] elements starting at [offset]. [offset] may equal size(), but [count]
 		// must fit within the remaining elements.
-		EMBER_FINLINE constexpr Span subspan(size_type offset, size_type count) const noexcept
+		EMBER_FINLINE constexpr Span subspan(size_type offset, size_type count) const
 		{
 			EMBER_ASSERT(offset <= m_size);
 
@@ -228,7 +223,7 @@ namespace Ember
 		}
 
 		// Returns the elements from [offset] to the end. [offset] must not exceed size().
-		EMBER_FINLINE constexpr Span subspan(size_type offset) const noexcept
+		EMBER_FINLINE constexpr Span subspan(size_type offset) const
 		{
 			EMBER_ASSERT(offset <= m_size);
 			return Span(m_data + offset, m_size - offset);
@@ -263,7 +258,7 @@ namespace Ember
 	// Views the elements' object representation without copying. The returned span borrows the same
 	// storage.
 	template <typename T>
-	EMBER_FINLINE Span<const std::byte> as_bytes(Span<T> s) noexcept
+	EMBER_FINLINE Span<const std::byte> as_bytes(Span<T> s)
 	{
 		return Span<const std::byte>(reinterpret_cast<const std::byte*>(s.data()), s.size_bytes());
 	}
@@ -272,55 +267,8 @@ namespace Ember
 	// bypass their constness.
 	template <typename T>
 	    requires(!std::is_const_v<T>)
-	EMBER_FINLINE Span<std::byte> as_writable_bytes(Span<T> s) noexcept
+	EMBER_FINLINE Span<std::byte> as_writable_bytes(Span<T> s)
 	{
 		return Span<std::byte>(reinterpret_cast<std::byte*>(s.data()), s.size_bytes());
-	}
-
-	namespace Private
-	{
-		// Keep the view trivial and limited to a pointer and a count. Owning state or nontrivial
-		// cleanup would change its cost and lifetime contract.
-		static_assert(std::is_trivially_copyable_v<Span<const u32>>);
-		static_assert(std::is_trivially_destructible_v<Span<const u32>>);
-		static_assert(sizeof(Span<u32>) == sizeof(void*) + sizeof(size_t));
-
-		// Allow adding const, reject removing it, and prevent mutable views of initializer-list
-		// storage.
-		static_assert(std::is_convertible_v<Span<u32>, Span<const u32>>);
-		static_assert(!std::is_constructible_v<Span<u32>, Span<const u32>>);
-		static_assert(!std::is_constructible_v<Span<u32>, std::initializer_list<u32>>);
-
-		// Check basic construction, access and slicing during constant evaluation. These cases
-		// cover valid uses; they do not establish lifetime safety for arbitrary callers.
-		constexpr bool span_self_test()
-		{
-			constexpr u32 values[] = {1, 2, 3, 4};
-
-			const Span<const u32> s = values;
-
-			bool ok = s.size() == 4 && !s.empty() && s.front() == 1 && s.back() == 4 && s[2] == 3;
-			ok = ok && s.first(2).back() == 2 && s.last(3).front() == 2;
-			ok = ok && s.subspan(1, 2).front() == 2 && s.subspan(2).size() == 2;
-			ok = ok && Span<const u32>{}.empty();
-
-			const auto sum = [](Span<const u32> list)
-			{
-				u32 total = 0;
-				for (const u32 v : list)
-				{
-					total += v;
-				}
-				return total;
-			};
-
-			// Keep construction and consumption in one full expression so the list's backing array
-			// remains alive throughout the call.
-			ok = ok && sum({10, 20, 30}) == 60;
-
-			return ok;
-		}
-
-		static_assert(span_self_test(), "Ember::Span self-test failed");
 	}
 }

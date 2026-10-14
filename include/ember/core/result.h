@@ -4,7 +4,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace Ember
+namespace ember
 {
 	template <class T, class E>
 	using Result = tl::expected<T, E>;

@@ -4,7 +4,7 @@
 
 #include <ember/core/types.h>
 
-namespace Ember
+namespace ember
 {
 	struct Extent2D
 	{

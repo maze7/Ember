@@ -1,5 +1,6 @@
 add_subdirectory(fmt EXCLUDE_FROM_ALL)
 add_subdirectory(stb EXCLUDE_FROM_ALL)
+add_subdirectory(glm EXCLUDE_FROM_ALL)
 add_subdirectory(unordered_dense EXCLUDE_FROM_ALL)
 add_subdirectory(rpmalloc EXCLUDE_FROM_ALL)
 
