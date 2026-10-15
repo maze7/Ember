@@ -1,7 +1,7 @@
 ember_add_module(core
 	SOURCES
 		core/assert.cpp
-		core/logger.cpp
+		core/log.cpp
 		memory/tlsf.c
 		memory/arena.cpp
 		memory/block_heap.cpp
