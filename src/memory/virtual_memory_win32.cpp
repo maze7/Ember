@@ -16,7 +16,7 @@ namespace ember::virtual_memory
 {
 	namespace
 	{
-		// Both sizes come from one query, made on first use.
+		// Cache both values from one system query on first use.
 		struct PageInfo
 		{
 			size_t page_size = 0;
@@ -35,8 +35,8 @@ namespace ember::virtual_memory
 			return s_info;
 		}
 
-		// The checks every call makes: a page aligned address and a non-empty, page sized range.
-		// All of it is caller contract, so it only asserts.
+		// These ranges come from our allocators, so invalid alignment or size is
+		// a caller bug. Keep those checks separate from operating-system failures.
 		void assert_page_range(const void* address, size_t size)
 		{
 			EMBER_ASSERT(address != nullptr);
@@ -79,7 +79,8 @@ namespace ember::virtual_memory
 	{
 		assert_page_range(address, size);
 
-		// MEM_RELEASE takes the base address and a size of zero; the size is only checked here.
+		// MEM_RELEASE requires the reservation's base address and a zero size.
+		// We still check the caller's size above for consistency with the other APIs.
 		return VirtualFree(address, 0, MEM_RELEASE) != 0;
 	}
 }

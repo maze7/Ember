@@ -8,15 +8,21 @@
 // On a fiber the rule is stricter still. A job must never hold a SpinMutex across a wait: the job
 // resumes on whichever worker takes it, and in between the lock would be pinning a thread that
 // no longer has any reason to be pinned.
+//
+// The header includes <atomic> and nothing else. The pause instruction is a compiler builtin
+// and the yield is one C function, because the obvious spellings, <immintrin.h> for _mm_pause
+// and <thread> for std::this_thread::yield, cost a hundred thousand preprocessed lines, and this
+// header sits under the memory module and so under everything.
 
 #include <ember/core/macros.h>
 #include <ember/core/types.h>
 
 #include <atomic>
-#include <thread>
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
-	#include <immintrin.h>
+#if EMBER_COMPILER_MSVC
+extern "C" __declspec(dllimport) int __stdcall SwitchToThread(void);
+#else
+	#include <sched.h>
 #endif
 
 namespace ember
@@ -29,14 +35,22 @@ namespace ember
 		EMBER_FINLINE void cpu_relax(u32 spins)
 		{
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
+	#if EMBER_COMPILER_MSVC
 			_mm_pause();
+	#else
+			__builtin_ia32_pause();
+	#endif
 #elif defined(__aarch64__) || defined(__arm__)
 			__asm__ __volatile__("yield");
 #endif
 
 			if (spins > 64)
 			{
-				std::this_thread::yield();
+#if EMBER_COMPILER_MSVC
+				SwitchToThread();
+#else
+				sched_yield();
+#endif
 			}
 		}
 	}

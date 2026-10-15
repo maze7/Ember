@@ -1,95 +1,107 @@
 #pragma once
 
-// The front of the memory module: initialization, the process-wide heaps, and the helpers that
-// construct objects in them.
+// Owns the memory reservation and the allocators built over it. Callers that
+// only need heap allocation or object construction can include heap.h or
+// new.h directly.
 //
-// Memory in Ember has one of two shapes. Anything with a lifetime, which is nearly everything a
-// frame or a level produces, is placed in an Arena and freed by tag when that lifetime ends.
-// Anything without one goes on the general Heap under a Category, attributed and budgeted but
-// never on the frame's critical path. There is no third shape: no per allocation free in the
-// main loop, and no allocation the module cannot name the owner of.
+// At startup, we reserve one address range for the heap, the block pool, and
+// optional development memory. The normal allocator backend works within
+// these partitions, making their capacities explicit memory budgets.
+// Sanitizer builds use the system allocator for heap storage.
+//
+// Use an arena when allocations can be reclaimed together, such as the data
+// produced for a frame or level. Use the heap when allocations need to be
+// released individually.
+//
+// Allocations must stay within the module's lifetime. In particular, static
+// objects must not retain heap storage past shutdown().
+//
+// Allocation sizes use size_t to match the standard library's allocator
+// interface and the platform memory APIs.
 
 #include <ember/core/macros.h>
-#include <ember/core/result.h>
 #include <ember/core/types.h>
 #include <ember/memory/allocator.h>
 #include <ember/memory/arena.h>
+#include <ember/memory/block_heap.h>
 #include <ember/memory/heap.h>
-#include <ember/memory/tagged_heap.h>
-#include <ember/memory/tracker.h>
+#include <ember/memory/new.h>
+#include <ember/memory/tag.h>
 
 #include <cstddef>
-#include <new> // IWYU pragma: keep
-#include <type_traits>
-#include <utility>
 
 namespace ember::memory
 {
 	struct MemoryDef
 	{
-		// Total capacity of the shared tagged block heap, rounded up to whole blocks.
-		u64 block_heap_capacity = 256_mb;
+		// Capacity of the retail heap. Requests that cannot fit try development
+		// memory when it is available; otherwise allocation fails.
+		u64 heap_capacity = 256_mb;
 
-		// Size of one block, which is one thread's bump region between refills. Must be a power of
-		// two no larger than the heap. Larger blocks refill less often but abandon more tail space.
+		// Capacity shared by all block lifetimes, rounded up to whole blocks.
+		u64 block_capacity = 256_mb;
+
+		// Block size used for arena refills. Must be a power of two.
+		// Larger blocks reduce refills but can leave more space unused.
 		u64 block_size = 2_mb;
+
+		// Optional heap for tools and retail overflow. Zero disables it.
+		// Without development memory, Tools allocations use the retail heap.
+		u64 development_capacity = EMBER_MEMORY_TRACKING >= 1 ? 256_mb : 0;
 	};
 
-	// Brings up the memory services. The caller serializes this against shutdown(). On success the
-	// calling thread holds an arena slot, and the Unknown heap is set as the default allocator for
-	// any container that was not given one. Failure is logged. The reasons it can fail; a tracker
-	// that would not start, a block heap the OS would not reserve, no thread slot left, are all
-	// configuration or environment, so the caller has nothing to branch on beyond the bool.
+	// Allocator usage for one region. Heap usage includes per-allocation
+	// overhead; block usage counts whole blocks. These figures describe
+	// allocator usage rather than physical page residency.
+	struct RegionStats
+	{
+		u64 used_bytes = 0;
+		u64 peak_bytes = 0;
+		u64 capacity = 0;
+	};
+
+	// Usage across the retail heap, block pool, and development heap.
+	// overflowed records that a retail allocation needed development fallback.
+	// retail_peak adds the separate heap and block peaks, which may have
+	// occurred at different times.
+	struct MemoryMap
+	{
+		RegionStats heap;
+		RegionStats blocks;
+		RegionStats development;
+
+		u64 retail_bytes = 0;
+		u64 retail_peak = 0;
+		u64 retail_capacity = 0;
+		bool overflowed = false;
+	};
+
+	// Reserves the memory map, initializes its allocators, and registers the
+	// calling thread for arena allocation. Returns false if setup fails.
+	// Call before other memory use, with no concurrent memory API calls.
+	// Initialization failures are logged.
 	bool initialize(const MemoryDef& def = {});
 
-	// Releases the arenas and the block heap. Every job and every thread using engine memory needs
-	// to have stopped first; pointers into either are invalid afterwards. The default allocator
-	// stays attached to the process heap so that static destruction can still free what it owns.
+	// Reports outstanding heap allocations, then releases the reservation.
+	// All users must have stopped, arena lifetimes must have been reclaimed,
+	// and owners must have released their heap allocations before this call.
 	void shutdown();
 
-	// Per-thread allocator state, for threads the job system does not own. A thread releases its
-	// thread-local heap allocations before shutdown_thread().
+	// Registers or unregisters the calling thread for arena allocation.
+	// External threads register before their first arena use and unregister
+	// after their last. Registration fails when all slots are occupied.
 	bool initialize_thread();
 	void shutdown_thread();
 
-	// The shared tagged heap that block-based transient allocators refill from. Valid from
-	// initialize() to shutdown().
-	TaggedHeap& tagged_heap();
+	// The shared block heap used by arenas between initialize() and shutdown().
+	BlockHeap* block_heap();
 
-	// The heap view for a category. Valid at any time, before initialize and after shutdown
-	// included, which is what lets a static object use it.
-	Heap* heap(Category category = Category::Unknown);
+	// Reads partition usage and capacities for telemetry. Regions are sampled
+	// separately, so activity during the read can affect the combined totals.
+	// Serialize this with initialization and shutdown.
+	MemoryMap map();
 
-	// Constructs a T in [allocator]'s memory. Construction must not throw and allocation failure
-	// never returns, so the result is always an object. Destroy it with delete_object through the
-	// same resource.
-	template <typename T, typename... Args>
-	T* new_object(Allocator* allocator, Args&&... args)
-	{
-		static_assert(std::is_nothrow_constructible_v<T, Args&&...>,
-		    "construction must not throw; fallible setup belongs in a create() function");
-
-		void* memory = allocator->allocate(sizeof(T), alignof(T));
-		return ::new (memory) T(std::forward<Args>(args)...);
-	}
-
-	// Destroys an object and returns its storage. ptr may be null, and must otherwise point
-	// at the most derived T, because the size and alignment handed back are T's.
-	template <typename T>
-	void delete_object(Allocator* allocator, T* ptr)
-	{
-		static_assert(std::is_nothrow_destructible_v<T>, "destructors must not throw");
-
-		if (ptr == nullptr)
-		{
-			return;
-		}
-
-		ptr->~T();
-		allocator->deallocate(ptr, sizeof(T), alignof(T));
-	}
-
-	// Reports an allocation failure and ends the process. Engine allocators call this rather than
-	// returning null or throwing, because there's nothing sensible we can do when we OOM.
+	// Reports the failed request and stops the process. Heap and arena
+	// allocation use this when they cannot provide the requested storage.
 	[[noreturn]] void out_of_memory(size_t size, size_t alignment, const char* owner);
 }

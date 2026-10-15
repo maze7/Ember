@@ -1,12 +1,11 @@
 #pragma once
 
-// The platform's pages, as Ember's allocators see them. Address space is reserved first and
-// committed later, in the Win32 shape; on POSIX a reservation is a PROT_NONE mapping and a commit
-// is the mprotect that makes it usable. Physical pages arrive on first touch either way.
+// Reserves address space and controls which pages allocators can access.
+// Reservation keeps the addresses available; commitment makes them usable.
 //
-// Every address and size handed to commit, decommit and release must be page aligned, and a
-// release must name the whole reservation. The callers are the allocators in this module, which
-// is why those are assertions rather than error returns.
+// commit(), decommit(), and release() require a nonempty, page-aligned range.
+// release() must receive the whole reservation. These are caller contracts,
+// checked with assertions; operating-system failures are returned separately.
 
 #include <ember/core/types.h>
 
@@ -14,23 +13,25 @@
 
 namespace ember::virtual_memory
 {
-	// The unit the kernel maps in, and the alignment of every address returned by reserve().
+	// The page size used to align committed and protected ranges.
 	size_t page_size();
 
-	// The unit reservations are made in: 64 KiB on Windows, a page everywhere else.
+	// Alignment required for reservations, which may be larger than a page.
 	size_t allocation_granularity();
 
-	// Claims address space with no access, rounded up to the allocation granularity. Null when
-	// the system refuses.
+	// Reserves inaccessible address space, rounding size up to the reservation
+	// granularity. Returns null if the operating system rejects the request.
 	[[nodiscard]] void* reserve(size_t size);
 
-	// Makes pages readable and writable. False when the system is out of memory.
+	// Makes the range readable and writable. Returns false if the operating
+	// system rejects the request.
 	[[nodiscard]] bool commit(void* address, size_t size);
 
-	// Gives pages back while keeping the address space. Their contents are gone, and touching
-	// them before the next commit faults.
+	// Makes the range inaccessible and asks the operating system to discard its
+	// backing pages while retaining the addresses. Treat the contents as discarded;
+	// do not access the range until it has been committed again.
 	[[nodiscard]] bool decommit(void* address, size_t size);
 
-	// Returns a reservation to the system. The size is the rounded size reserve() applied.
+	// Releases the whole reservation. Pass the rounded size used by reserve().
 	[[nodiscard]] bool release(void* address, size_t size);
 }

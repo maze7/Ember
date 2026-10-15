@@ -2,10 +2,11 @@ ember_add_module(core
 	SOURCES
 		core/assert.cpp
 		core/logger.cpp
+		memory/tlsf.c
 		memory/arena.cpp
+		memory/block_heap.cpp
 		memory/heap.cpp
 		memory/memory.cpp
-		memory/tagged_heap.cpp
 		memory/tracker.cpp
 		memory/virtual_memory_posix.cpp
 		memory/virtual_memory_win32.cpp

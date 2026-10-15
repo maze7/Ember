@@ -11,8 +11,8 @@ namespace ember::virtual_memory
 {
 	namespace
 	{
-		// The checks every call makes: a page aligned address and a non-empty, page sized range.
-		// All of it is caller contract, so it only asserts.
+		// These ranges come from our allocators, so invalid alignment or size is
+		// a caller bug. Keep those checks separate from operating-system failures.
 		void assert_page_range(const void* address, size_t size)
 		{
 			EMBER_ASSERT(address != nullptr);
@@ -29,7 +29,7 @@ namespace ember::virtual_memory
 
 	size_t allocation_granularity()
 	{
-		// mmap places every mapping on a page boundary, so pages are the granularity too.
+		// mmap already aligns reservations to pages, so no larger granularity is needed.
 		return page_size();
 	}
 
@@ -52,9 +52,9 @@ namespace ember::virtual_memory
 	{
 		assert_page_range(address, size);
 
-	// MADV_DONTNEED drops the pages now. macOS has only MADV_FREE, which lets the kernel take
-	// them when it wants to. Protecting the range afterwards makes a stale pointer fault
-	// instead of reading whatever is left, which is what a Win32 decommit does by itself.
+	// Discarding backing pages does not remove access to the addresses.
+	// Protect the range as well so stale pointers fault until it is committed again.
+	// macOS uses MADV_FREE here; the other POSIX path uses MADV_DONTNEED.
 	#if defined(__APPLE__)
 		const bool advised = madvise(address, size, MADV_FREE) == 0;
 	#else

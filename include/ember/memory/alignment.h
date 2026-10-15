@@ -1,8 +1,7 @@
 #pragma once
 
-// Alignment arithmetic for the memory module, pools and the GPU backend. Everything else of this
-// kind that Ember needs is in <bit> as of C++20 and is used from there directly. This file holds
-// only what the standard library does not offer.
+// Alignment helpers shared by allocators, pools, and GPU resources.
+// Use <bit> directly for the operations it already provides.
 
 #include <ember/core/macros.h>
 #include <ember/core/types.h>
@@ -15,11 +14,11 @@
 
 namespace ember
 {
-	// What an allocator hands out when the caller does not say. It fits every scalar and a 128-bit
-	// SIMD lane, and it is what malloc guarantees on the platforms Ember runs on.
+	// Raw allocations default to 16-byte alignment. Typed allocations request
+	// the alignment of their element type.
 	inline constexpr size_t DEFAULT_ALIGNMENT = 16;
 
-	// Rounds [value] down to a multiple of [alignment], which must be a power of two.
+	// Rounds value down to a multiple of alignment, which must be a power of two.
 	template <std::unsigned_integral T>
 	EMBER_FINLINE constexpr T align_down(T value, T alignment)
 	{
@@ -27,9 +26,8 @@ namespace ember
 		return value & ~(alignment - 1);
 	}
 
-	// Rounds [value] up to a multiple of [alignment]. The result must fit in T: a value within one
-	// alignment of the type's maximum would wrap to a small number and pass every later check, so
-	// that is asserted too.
+	// Rounds value up to a power-of-two alignment. The addition must not overflow:
+	// wrapping could turn an invalid offset into a plausible small one.
 	template <std::unsigned_integral T>
 	EMBER_FINLINE constexpr T align_up(T value, T alignment)
 	{
@@ -38,8 +36,8 @@ namespace ember
 		return (value + (alignment - 1)) & ~(alignment - 1);
 	}
 
-	// The same two for addresses. These are not constexpr, because reinterpret_cast is not allowed
-	// in constant evaluation and an address is never a compile-time quantity anyway.
+	// The pointer overloads apply the same arithmetic through uintptr_t.
+	// Their pointer-to-integer casts prevent use in constant expressions.
 	template <typename T>
 	EMBER_FINLINE T* align_down(T* pointer, size_t alignment)
 	{
@@ -52,9 +50,8 @@ namespace ember
 		return reinterpret_cast<T*>(align_up(reinterpret_cast<uintptr_t>(pointer), alignment));
 	}
 
-	// True when [pointer] is a multiple of [alignment], which must be a power of two. A bad
-	// alignment asserts here like everywhere else, rather than reporting the pointer as unaligned
-	// and letting the real mistake hide behind a plausible answer.
+	// Tests whether pointer meets a power-of-two alignment. Assert the alignment
+	// first so a bad request is not mistaken for an unaligned pointer.
 	EMBER_FINLINE bool is_aligned(const void* pointer, size_t alignment)
 	{
 		EMBER_ASSERT(std::has_single_bit(alignment));
