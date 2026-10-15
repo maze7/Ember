@@ -175,13 +175,7 @@ namespace ember::memory
 		template <typename Half, typename... Args>
 		auto with_allocator(std::tuple<Args...>&& args)
 		{
-			if constexpr (internal::IsPair<Half>)
-			{
-				// Nested pairs need another piecewise split. Allocator propagation stops here,
-				// so their constructor arguments pass through unchanged.
-				return std::move(args);
-			}
-			else if constexpr (internal::TakesAllocator<Half, TagAllocator>)
+			if constexpr (internal::TakesAllocator<Half, TagAllocator>)
 			{
 				return std::tuple_cat(std::move(args), std::tuple<TagAllocator<Half>>(*this));
 			}
