@@ -40,12 +40,9 @@ namespace ember::memory
 		virtual void deallocate(void* ptr, size_t size, size_t alignment) = 0;
 	};
 
-	namespace memory
-	{
-		// Declared here so TagAllocator can default to the general heap without
-		// including the rest of its public API.
-		Allocator* heap();
-	}
+	// Declared here so TagAllocator can default to the general heap without
+	// including the rest of its public API.
+	Allocator* heap();
 
 	namespace internal
 	{
@@ -81,11 +78,11 @@ namespace ember::memory
 		Allocator* allocator = nullptr;
 		Tag tag = Tag::Unknown;
 
-		TagAllocator() : allocator(memory::heap())
+		TagAllocator() : allocator(heap())
 		{
 		}
 
-		TagAllocator(Tag tag) : allocator(memory::heap()), tag(tag)
+		TagAllocator(Tag tag) : allocator(heap()), tag(tag)
 		{
 		}
 

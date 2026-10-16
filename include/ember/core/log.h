@@ -134,7 +134,7 @@ namespace ember
 		{
 			if (level() <= LogLevel::Info)
 			{
-				write(LogLevel::Warn, where, format, fmt::make_format_args(args...));
+				write(LogLevel::Info, where, format, fmt::make_format_args(args...));
 			}
 		}
 

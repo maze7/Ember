@@ -47,3 +47,12 @@ namespace ember
 // allocator on its own. The name must be a string literal, or otherwise live for the whole run.
 #define EMBER_PROFILE_ALLOC(ptr, size, name) TracyAllocN(ptr, size, name)
 #define EMBER_PROFILE_FREE(ptr, name) TracyFreeN(ptr, name)
+
+// Names the calling thread in captures, where the profiler keeps the whole name rather than the
+// fifteen characters Linux keeps. Tracy has no empty stand-in for this one, so the macro is
+// guarded here. thread::set_name() calls it; nothing else needs to.
+#if defined(TRACY_ENABLE)
+	#define EMBER_PROFILE_THREAD(name) ::tracy::SetThreadName(name)
+#else
+	#define EMBER_PROFILE_THREAD(name) ((void)0)
+#endif

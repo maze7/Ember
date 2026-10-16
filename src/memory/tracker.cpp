@@ -176,6 +176,7 @@ namespace ember::memory
 		std::fprintf(stderr, "\n%-12s %14s %14s %14s\n", "Region", "Used", "Peak", "Capacity");
 		print_region("Heap", memory_map.heap);
 		print_region("Blocks", memory_map.blocks);
+		print_region("Stacks", memory_map.stacks);
 		if (memory_map.development.capacity != 0)
 		{
 			print_region("Development", memory_map.development);

@@ -21,11 +21,8 @@ namespace ember::memory
 	// passes an empty source location, so detailed leak reports identify the
 	// allocation by its tag and allocation number.
 	template <typename T, typename... Args>
-	[[nodiscard]] T* new_object(Allocator* allocator, Tag tag, Args&&... args)
+	[[nodiscard]] T* new_object(Allocator* allocator, Tag tag, Args&&... args) noexcept
 	{
-		static_assert(std::is_nothrow_constructible_v<T, Args&&...>,
-		    "construction must not throw; fallible setup belongs in a create() function");
-
 		void* memory = allocator->allocate(tag, sizeof(T), alignof(T), std::source_location{});
 		return ::new (memory) T(std::forward<Args>(args)...);
 	}
@@ -34,7 +31,7 @@ namespace ember::memory
 	// A null pointer is harmless. T must be the original allocation type because
 	// deallocation uses sizeof(T) and alignof(T).
 	template <typename T>
-	void delete_object(Allocator* allocator, T* object)
+	void delete_object(Allocator* allocator, T* object) noexcept
 	{
 		static_assert(std::is_nothrow_destructible_v<T>, "destructors must not throw");
 

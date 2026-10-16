@@ -2,6 +2,14 @@ ember_add_module(core
 	SOURCES
 		core/assert.cpp
 		core/log.cpp
+		core/thread_posix.cpp
+		core/thread_win32.cpp
+		core/job.cpp
+		core/job_scheduler.cpp
+		core/io_thread.cpp
+		core/fiber_posix.cpp
+		core/fiber_aarch64_aapcs.S
+		core/fiber_x86_64_sysv.S
 		memory/tlsf.c
 		memory/arena.cpp
 		memory/block_heap.cpp

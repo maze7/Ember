@@ -81,9 +81,10 @@ namespace ember::jobs
 		// zero; taken back if the queue has no room.
 		scheduler->add(completion, 1);
 
-		if (!push_or_full(queues[(u32)job.priority], job))
+		const Job queued{.fn = job.fn, .data = job.data, .name = job.name, .counter = &completion};
+		if (!push_or_full(queues[(u32)job.priority], queued))
 		{
-			scheduler->undo(completion);
+			scheduler->complete(completion);
 			return IoKickError::QueueFull;
 		}
 

@@ -183,12 +183,6 @@ namespace ember::jobs
 		counter.m_remaining.fetch_add(count, std::memory_order_relaxed);
 	}
 
-	// Takes back one add that never became a job: nothing to wake, since nothing ran.
-	void Scheduler::undo(Counter& counter)
-	{
-		counter.m_remaining.fetch_sub(1, std::memory_order_relaxed);
-	}
-
 	// One subtract. The release half publishes the job's writes to whoever reads zero. Past
 	// the subtract the counter is nobody's: a waiter that read zero may have destroyed it,
 	// so the last completion goes on by address alone.
@@ -292,7 +286,9 @@ namespace ember::jobs
 		memory::free(records);
 		free_list.shutdown();
 
-		// The stacks stay with the partition.
+		// Return stacks to the partition, so a later initialize() can take them again.
+		memory::free_stacks(stacks, stride * count);
+
 		records = nullptr;
 		stacks = nullptr;
 		count = 0;

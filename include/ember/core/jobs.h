@@ -272,7 +272,7 @@ namespace ember::jobs
 
 	// Splits [0, count) into at most MAX_RANGE_JOBS even ranges of about [grain] items, kicks
 	// one job per range and waits for all of them. Zero items kicks nothing.
-	void parallel_for(const ParallelForDef& def, RangeFn fn, void* data);
+	void parallel_for(const ParallelForDef& def, RangeFn fn, void* data = nullptr);
 
 	// The callable form; fn(JobRange) is the job body and outlives the call by construction.
 	template <typename F>

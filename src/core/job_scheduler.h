@@ -296,7 +296,6 @@ namespace ember::jobs
 		// Counters and mutexes. Both are an atomic word; the fibers waiting on them live in
 		// the wait list.
 		void add(Counter& counter, u32 count);
-		void undo(Counter& counter);
 		void complete(Counter& counter);
 		void park(FiberRecord* fiber);
 		void wake_waiters(const void* key);

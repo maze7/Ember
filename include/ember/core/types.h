@@ -23,17 +23,17 @@ namespace ember
 
 	// Byte sizes read better as units than as products of 1024. They are consteval so a size can
 	// only be spelled with a literal, which is the only place a unit belongs.
-	consteval u64 operator""_kb(unsigned long long value)
+	consteval u64 operator""_kb(unsigned long long value) noexcept
 	{
 		return static_cast<u64>(value) * 1024;
 	}
 
-	consteval u64 operator""_mb(unsigned long long value)
+	consteval u64 operator""_mb(unsigned long long value) noexcept
 	{
 		return static_cast<u64>(value) * 1024 * 1024;
 	}
 
-	consteval u64 operator""_gb(unsigned long long value)
+	consteval u64 operator""_gb(unsigned long long value) noexcept
 	{
 		return static_cast<u64>(value) * 1024 * 1024 * 1024;
 	}

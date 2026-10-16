@@ -378,12 +378,12 @@ namespace ember::memory
 			void* allocate(Tag tag, size_t size, size_t alignment,
 			    std::source_location where) override
 			{
-				return allocate(tag, size, alignment, where);
+				return memory::allocate(tag, size, alignment, where);
 			}
 
 			void deallocate(void* ptr, size_t, size_t) override
 			{
-				free(ptr);
+				memory::free(ptr);
 			}
 		};
 

@@ -4,9 +4,9 @@
 // only need heap allocation or object construction can include heap.h or
 // new.h directly.
 //
-// At startup, we reserve one address range for the heap, the block pool, and
-// optional development memory. The normal allocator backend works within
-// these partitions, making their capacities explicit memory budgets.
+// At startup, we reserve one address range for the heap, the block pool, fiber
+// stacks, and optional development memory. The normal allocator backend works
+// within these partitions, making their capacities explicit memory budgets.
 // Sanitizer builds use the system allocator for heap storage.
 //
 // Use an arena when allocations can be reclaimed together, such as the data
@@ -45,6 +45,11 @@ namespace ember::memory
 		// Larger blocks reduce refills but can leave more space unused.
 		u64 block_size = 2_mb;
 
+		// Capacity for fiber stacks and their guard pages. The job system takes
+		// its stacks from here when it stats; the default holds 160 fibers of
+		// 256 KiB with room to spare. Zero leaves the job system no stacks.
+		u64 stack_capacity = 64_mb;
+
 		// Optional heap for tools and retail overflow. Zero disables it.
 		// Without development memory, Tools allocations use the retail heap.
 		u64 development_capacity = EMBER_MEMORY_TRACKING >= 1 ? 256_mb : 0;
@@ -60,7 +65,7 @@ namespace ember::memory
 		u64 capacity = 0;
 	};
 
-	// Usage across the retail heap, block pool, and development heap.
+	// Usage across the retail heap, block pool, fiber stacks, and development heap.
 	// overflowed records that a retail allocation needed development fallback.
 	// retail_peak adds the separate heap and block peaks, which may have
 	// occurred at different times.
@@ -68,6 +73,7 @@ namespace ember::memory
 	{
 		RegionStats heap;
 		RegionStats blocks;
+		RegionStats stacks;
 		RegionStats development;
 
 		u64 retail_bytes = 0;
@@ -95,6 +101,16 @@ namespace ember::memory
 
 	// The shared block heap used by arenas between initialize() and shutdown().
 	BlockHeap* block_heap();
+
+	// Takes [size] bytes from the stack partition, rounded up to whole pages. The
+	// range is page-aligned and committed; the caller lays out its stacks and decommits
+	// the guard page below each one. Returns null when the partition cannot hold the
+	// request.
+	u8* allocate_stacks(size_t size);
+
+	// Returns a range from allocate_stacks(), most recent first, and commits it
+	// again, guard pages included, so the next caller starts from the same state.
+	void free_stacks(u8* stacks, size_t size);
 
 	// Reads partition usage and capacities for telemetry. Regions are sampled
 	// separately, so activity during the read can affect the combined totals.
