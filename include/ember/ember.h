@@ -3,7 +3,7 @@
 #include <ember/core/log.h>
 
 #ifdef EMBER_HAS_PLATFORM
-	#include <ember/platform/app.h>
+	#include <ember/platform/platform.h>
 #endif
 
 #ifdef EMBER_HAS_GRAPHICS

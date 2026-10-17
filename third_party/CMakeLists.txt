@@ -3,6 +3,26 @@ add_subdirectory(stb EXCLUDE_FROM_ALL)
 add_subdirectory(glm EXCLUDE_FROM_ALL)
 add_subdirectory(unordered_dense EXCLUDE_FROM_ALL)
 
+# SDL3 is the desktop platform, private to ember::platform. Only the subsystems the platform
+# uses are built: video, events and gamepads. Audio, rendering, cameras and the rest would
+# otherwise compile, link and allocate for nothing.
+if(EMBER_BUILD_PLATFORM)
+	set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+	set(SDL_STATIC ON CACHE BOOL "" FORCE)
+	set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+	set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+	set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+	set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+
+	foreach(subsystem AUDIO GPU RENDER CAMERA HAPTIC HIDAPI POWER SENSOR DIALOG TRAY NOTIFICATION)
+		set(SDL_${subsystem} OFF CACHE BOOL "" FORCE)
+	endforeach()
+	set(SDL_VIDEO ON CACHE BOOL "" FORCE)
+	set(SDL_JOYSTICK ON CACHE BOOL "" FORCE)
+
+	add_subdirectory(SDL EXCLUDE_FROM_ALL)
+endif()
+
 # Tracy profiling is only enabled when EMBER_ENABLE_PROFILING is ON
 if (EMBER_ENABLE_PROFILING)
 # Tracy's own CMake option must also be enabled.

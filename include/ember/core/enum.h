@@ -70,48 +70,48 @@ namespace ember
 #define EMBER_ENUM_BITWISE_OPS(EnumType)                                                           \
 	static_assert(std::is_enum_v<EnumType>, "EMBER_ENUM_BITWISE_OPS needs an enum");               \
                                                                                                    \
-	[[nodiscard]] constexpr(EnumType) operator|(EnumType lhs, EnumType rhs)                        \
+	[[nodiscard]] constexpr EnumType operator|(EnumType lhs, EnumType rhs)                         \
 	{                                                                                              \
 		using U = std::underlying_type_t<EnumType>;                                                \
 		return static_cast<EnumType>(static_cast<U>(lhs) | static_cast<U>(rhs));                   \
 	}                                                                                              \
                                                                                                    \
-	[[nodiscard]] constexpr(EnumType) operator&(EnumType lhs, EnumType rhs)                        \
+	[[nodiscard]] constexpr EnumType operator&(EnumType lhs, EnumType rhs)                         \
 	{                                                                                              \
 		using U = std::underlying_type_t<EnumType>;                                                \
 		return static_cast<EnumType>(static_cast<U>(lhs) & static_cast<U>(rhs));                   \
 	}                                                                                              \
                                                                                                    \
-	[[nodiscard]] constexpr(EnumType) operator^(EnumType lhs, EnumType rhs)                        \
+	[[nodiscard]] constexpr EnumType operator^(EnumType lhs, EnumType rhs)                         \
 	{                                                                                              \
 		using U = std::underlying_type_t<EnumType>;                                                \
 		return static_cast<EnumType>(static_cast<U>(lhs) ^ static_cast<U>(rhs));                   \
 	}                                                                                              \
                                                                                                    \
-	[[nodiscard]] constexpr(EnumType) operator~(EnumType value)                                    \
+	[[nodiscard]] constexpr EnumType operator~(EnumType value)                                     \
 	{                                                                                              \
 		using U = std::underlying_type_t<EnumType>;                                                \
 		return static_cast<EnumType>(~static_cast<U>(value));                                      \
 	}                                                                                              \
                                                                                                    \
-	constexpr(EnumType) & operator|=((EnumType) & lhs, EnumType rhs)                               \
+	constexpr EnumType& operator|=(EnumType& lhs, EnumType rhs)                                    \
 	{                                                                                              \
 		return lhs = lhs | rhs;                                                                    \
 	}                                                                                              \
                                                                                                    \
-	constexpr(EnumType) & operator&=((EnumType) & lhs, EnumType rhs)                               \
+	constexpr EnumType& operator&=(EnumType& lhs, EnumType rhs)                                    \
 	{                                                                                              \
 		return lhs = lhs & rhs;                                                                    \
 	}                                                                                              \
                                                                                                    \
-	constexpr(EnumType) & operator^=((EnumType) & lhs, EnumType rhs)                               \
+	constexpr EnumType& operator^=(EnumType& lhs, EnumType rhs)                                    \
 	{                                                                                              \
 		return lhs = lhs ^ rhs;                                                                    \
 	}                                                                                              \
                                                                                                    \
 	[[nodiscard]] constexpr bool any(EnumType value)                                               \
 	{                                                                                              \
-		return static_cast<std::underlying_type_t<(EnumType)>>(value) != 0;                        \
+		return static_cast<std::underlying_type_t<EnumType>>(value) != 0;                          \
 	}                                                                                              \
                                                                                                    \
 	[[nodiscard]] constexpr bool none(EnumType value)                                              \

@@ -31,3 +31,15 @@ ember_add_module(core
 		$<$<PLATFORM_ID:Windows>:shell32>
 		$<$<PLATFORM_ID:Windows>:ole32>
 )
+
+if(EMBER_BUILD_PLATFORM)
+	ember_add_module(platform
+		SOURCES
+			platform/input_state.cpp
+			platform/platform_sdl3.cpp
+		PUBLIC_DEPS
+			ember::core
+		PRIVATE_DEPS
+			SDL3::SDL3-static
+	)
+endif()
