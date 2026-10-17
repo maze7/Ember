@@ -2,12 +2,6 @@ add_subdirectory(fmt EXCLUDE_FROM_ALL)
 add_subdirectory(stb EXCLUDE_FROM_ALL)
 add_subdirectory(glm EXCLUDE_FROM_ALL)
 add_subdirectory(unordered_dense EXCLUDE_FROM_ALL)
-add_subdirectory(rpmalloc EXCLUDE_FROM_ALL)
-
-# Expected requires these configurations before we include the subdirectory
-set(EXPECTED_BUILD_TESTS OFF)
-set(EXPECTED_BUILD_PACKAGE OFF)
-add_subdirectory(expected EXCLUDE_FROM_ALL)
 
 # Tracy profiling is only enabled when EMBER_ENABLE_PROFILING is ON
 if (EMBER_ENABLE_PROFILING)

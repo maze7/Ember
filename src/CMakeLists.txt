@@ -21,14 +21,6 @@ ember_add_module(core
 	PUBLIC_DEPS
 		fmt::fmt
 		glm::glm
-		tl::expected
 		unordered_dense::unordered_dense
 		$<$<BOOL:${EMBER_ENABLE_PROFILING}>:Tracy::TracyClient>
-	PRIVATE_DEPS
-		$<$<BOOL:${EMBER_USE_RPMALLOC}>:rpmalloc::rpmalloc>
-)
-
-target_compile_definitions(ember_core
-	PRIVATE
-		EMBER_USE_RPMALLOC=$<BOOL:${EMBER_USE_RPMALLOC}>
 )
