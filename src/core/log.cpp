@@ -2,6 +2,7 @@
 #include <ember/core/log.h>
 #include <ember/core/macros.h>
 #include <ember/core/spin_mutex.h>
+#include <ember/core/time.h>
 #include <ember/memory/arena.h>
 #include <ember/memory/heap.h>
 
@@ -9,7 +10,6 @@
 
 #include <atomic>
 #include <bit>
-#include <chrono>
 #include <cstdio>
 #include <cstring>
 
@@ -37,12 +37,6 @@ namespace ember::log
 		constinit u32 s_sink_count = 0;
 		constinit u64 s_reported_dropped = 0;
 		constinit bool s_color = true;
-
-		u64 now()
-		{
-			using namespace std::chrono;
-			return (u64)duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
-		}
 
 		const char* level_name(LogLevel level)
 		{
@@ -137,7 +131,7 @@ namespace ember::log
 			constexpr size_t LIMIT = LogRecord::TEXT_CAPACITY - 1;
 
 			LogRecord record;
-			record.time = now();
+			record.time = now_ns();
 			record.file = where.file_name();
 			record.line = where.line();
 			record.level = level;

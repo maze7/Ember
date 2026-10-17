@@ -2,11 +2,11 @@
 
 #include <ember/core/log.h>
 #include <ember/core/thread.h>
+#include <ember/core/time.h>
 #include <ember/memory/memory.h>
 #include <ember/memory/virtual_memory.h>
 
 #include <bit>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -855,7 +855,7 @@ namespace ember::jobs
 		stalls.fetch_add(1, std::memory_order_relaxed);
 
 		Worker& worker = *self->worker;
-		const auto since = std::chrono::steady_clock::now();
+		const u64 since = now_ns();
 
 		for (u32 spin = 0;; internal::cpu_relax(spin++))
 		{
@@ -870,8 +870,7 @@ namespace ember::jobs
 			}
 
 			if (def.stall_report_ms != 0 && (spin & 1023) == 1023 &&
-			    std::chrono::steady_clock::now() - since >=
-			        std::chrono::milliseconds(def.stall_report_ms) &&
+			    now_ns() - since >= (u64)def.stall_report_ms * 1'000'000 &&
 			    !failing.exchange(true, std::memory_order_acq_rel))
 			{
 				dump("a wait found no fiber and nothing finished");

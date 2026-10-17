@@ -4,6 +4,10 @@ ember_add_module(core
 		core/log.cpp
 		core/thread_posix.cpp
 		core/thread_win32.cpp
+		core/time.cpp
+		core/filesystem.cpp
+		core/filesystem_posix.cpp
+		core/filesystem_win32.cpp
 		core/job.cpp
 		core/job_scheduler.cpp
 		core/io_thread.cpp
@@ -23,4 +27,7 @@ ember_add_module(core
 		glm::glm
 		unordered_dense::unordered_dense
 		$<$<BOOL:${EMBER_ENABLE_PROFILING}>:Tracy::TracyClient>
+	PRIVATE_DEPS
+		$<$<PLATFORM_ID:Windows>:shell32>
+		$<$<PLATFORM_ID:Windows>:ole32>
 )
