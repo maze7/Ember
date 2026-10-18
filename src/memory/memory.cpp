@@ -5,7 +5,6 @@
 
 #include <atomic>
 #include <cstdio>
-#include <cstdlib>
 
 namespace ember::memory
 {
@@ -201,7 +200,7 @@ namespace ember::memory
 		std::fflush(stderr);
 
 		EMBER_DEBUG_BREAK();
-		std::abort();
+		halt();
 	}
 
 	void internal::fatal(const char* message)
@@ -210,6 +209,6 @@ namespace ember::memory
 		std::fflush(stderr);
 
 		EMBER_DEBUG_BREAK();
-		std::abort();
+		halt();
 	}
 }

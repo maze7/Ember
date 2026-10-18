@@ -8,7 +8,6 @@
 
 #include <bit>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <new>
 
@@ -82,7 +81,7 @@ namespace ember::jobs
 	{
 		EMBER_ERROR("jobs: {}", what);
 		EMBER_DEBUG_BREAK();
-		std::abort();
+		halt();
 	}
 
 	// Test before the exchange, so a spinner reads the line shared instead of bouncing it.
@@ -741,7 +740,7 @@ namespace ember::jobs
 			if (stopping.load(std::memory_order_acquire))
 			{
 				yield_to(self, &worker->thread_record, Pending::Free);
-				std::abort();
+				halt();
 			}
 
 			idle(*worker);

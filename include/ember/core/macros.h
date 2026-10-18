@@ -98,6 +98,10 @@ namespace ember
 	// implementation writes to stderr so it does not depend on the engine logger being available.
 	[[nodiscard]] bool assert_fail(const char* condition, const char* message, const char* file,
 	    int line, const char* function) noexcept;
+
+	// Stops the process, for a failure nothing can continue from. Out of line so that this
+	// header, which everything includes, does not pay for <cstdlib> to name abort.
+	[[noreturn]] void halt() noexcept;
 }
 
 // Checks an internal invariant. Failure indicates a programmer error; use normal error handling for
@@ -134,12 +138,12 @@ namespace ember
 	#define EMBER_UNREACHABLE()                                                                    \
 		do                                                                                         \
 		{                                                                                          \
-			if (::Ember::assert_fail("unreachable code reached", nullptr, __FILE__, __LINE__,      \
+			if (::ember::assert_fail("unreachable code reached", nullptr, __FILE__, __LINE__,      \
 			        __FUNCTION__))                                                                 \
 			{                                                                                      \
 				EMBER_DEBUG_BREAK();                                                               \
 			}                                                                                      \
-			::std::abort();                                                                        \
+			::ember::halt();                                                                       \
 		} while (false)
 #elif EMBER_COMPILER_MSVC
 	#define EMBER_UNREACHABLE() __assume(false)

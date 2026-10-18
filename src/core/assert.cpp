@@ -1,6 +1,7 @@
 #include "ember/core/macros.h"
 
 #include <cstdio>
+#include <cstdlib>
 
 namespace ember
 {
@@ -14,5 +15,10 @@ namespace ember
 		    message != nullptr ? " - " : "", message != nullptr ? message : "");
 		std::fflush(stderr);
 		return true;
+	}
+
+	void halt() noexcept
+	{
+		std::abort();
 	}
 }
