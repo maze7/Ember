@@ -74,6 +74,11 @@ namespace ember::thread
 		static const DWORD count = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
 		return count > 0 ? (u32)count : 1;
 	}
+
+	void sleep(u64 ns)
+	{
+		Sleep((DWORD)((ns + 999'999) / 1'000'000));
+	}
 }
 
 #endif

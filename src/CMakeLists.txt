@@ -5,6 +5,7 @@ ember_add_module(core
 		core/thread_posix.cpp
 		core/thread_win32.cpp
 		core/time.cpp
+		core/frame.cpp
 		core/filesystem.cpp
 		core/filesystem_posix.cpp
 		core/filesystem_win32.cpp

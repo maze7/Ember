@@ -123,6 +123,17 @@ namespace ember::thread
 
 		return count > 0 ? (u32)count : 1;
 	}
+
+	void sleep(u64 ns)
+	{
+		timespec left = {.tv_sec = (time_t)(ns / 1'000'000'000),
+		    .tv_nsec = (long)(ns % 1'000'000'000)};
+
+		// A signal cuts the sleep short and leaves the remainder in [left].
+		while (nanosleep(&left, &left) == -1 && errno == EINTR)
+		{
+		}
+	}
 }
 
 #endif

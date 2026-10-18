@@ -33,4 +33,8 @@ namespace ember::thread
 	// The logical processors this process may run on, so a core with two hardware threads
 	// counts twice. Fixed by the first call for the rest of the run. Never zero.
 	u32 hardware_count();
+
+	// Puts the calling thread to slee for at least [ns]. Do not call from within a job, which would
+	// hold its worker asleep.
+	void sleep(u64 ns);
 }
