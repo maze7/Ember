@@ -108,5 +108,8 @@ namespace ember
 
 		// Frames begun and not retured.
 		u32 live();
+
+		// Frames that may be live at once, FramesDef::in_flight. The GPU sizes its slots by it.
+		u32 in_flight();
 	}
 }

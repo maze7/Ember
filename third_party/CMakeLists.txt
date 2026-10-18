@@ -23,6 +23,14 @@ if(EMBER_BUILD_PLATFORM)
 	add_subdirectory(SDL EXCLUDE_FROM_ALL)
 endif()
 
+# Vulkan behind volk, which loads every entry point itself so nothing links libvulkan, and VMA for
+# device memory. Both are private to ember::gpu.
+if(EMBER_BUILD_GRAPHICS)
+	set(VOLK_PULL_IN_VULKAN ON CACHE BOOL "" FORCE)
+	add_subdirectory(volk EXCLUDE_FROM_ALL)
+	add_subdirectory(vma EXCLUDE_FROM_ALL)
+endif()
+
 # Tracy profiling is only enabled when EMBER_ENABLE_PROFILING is ON
 if (EMBER_ENABLE_PROFILING)
 # Tracy's own CMake option must also be enabled.

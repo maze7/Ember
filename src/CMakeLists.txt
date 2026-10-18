@@ -44,3 +44,35 @@ if(EMBER_BUILD_PLATFORM)
 			SDL3::SDL3-static
 	)
 endif()
+
+if(EMBER_BUILD_GRAPHICS)
+	ember_add_module(gpu
+		SOURCES
+			gpu/types.cpp
+			gpu/vulkan/boot.cpp
+			gpu/vulkan/commands.cpp
+			gpu/vulkan/frame.cpp
+			gpu/vulkan/swapchain.cpp
+			gpu/vulkan/texture.cpp
+			gpu/vulkan/vma.cpp
+		PUBLIC_DEPS
+			ember::core
+			$<$<BOOL:${EMBER_BUILD_PLATFORM}>:ember::platform>
+		PRIVATE_DEPS
+			volk::volk
+			GPUOpen::VulkanMemoryAllocator
+	)
+
+	# Volk loads every entry point itself, so no backend source may see
+	# the prototypes, and VMA fetches its through volk's tables. Vulkan
+	# structs are built with designated initializers that leave their
+	# zero fields out on purpose.
+	target_compile_definitions(ember_gpu PRIVATE
+		VK_NO_PROTOTYPES
+		VMA_STATIC_VULKAN_FUNCTIONS=0
+		VMA_DYNAMIC_VULKAN_FUNCTIONS=1
+	)
+	target_compile_options(ember_gpu PRIVATE
+		$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-missing-field-initializers>
+	)
+endif()

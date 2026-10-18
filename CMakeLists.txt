@@ -8,7 +8,7 @@ include(CMakeDependentOption)
 include(cmake/ember_module.cmake)
 
 option(EMBER_BUILD_PLATFORM "Build the platform module" ON)
-option(EMBER_BUILD_GRAPHICS "Build the graphics module" ON)
+option(EMBER_BUILD_GPU "Build the gpu module" ON)
 option(EMBER_BUILD_AUDIO "Build the audio module" ON)
 option(EMBER_ENABLE_PROFILING "Enable Tracy profiling in the engine" ON)
 

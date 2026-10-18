@@ -213,4 +213,9 @@ namespace ember::frames
 	{
 		return s_frames.live;
 	}
+
+	u32 in_flight()
+	{
+		return s_frames.def.in_flight;
+	}
 }
