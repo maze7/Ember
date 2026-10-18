@@ -21,10 +21,9 @@
 // Without development memory, a request that cannot fit calls out_of_memory().
 //
 // Direct calls capture the caller's source location. Containers and new_object
-// pass an empty location rather than reporting a line inside the wrapper.
-// At tracking level 2, break_on_allocation() can stop on a recorded number.
+// pass an empty location rather than reporting a line inside the wrapper. The
+// counts, budgets and leak report built from these records are in memory.h.
 
-#include <ember/core/enum.h>
 #include <ember/core/types.h>
 #include <ember/memory/alignment.h>
 #include <ember/memory/allocator.h>
@@ -35,9 +34,6 @@
 
 namespace ember::memory
 {
-	EMBER_ENUM_NAMES(Tag, "Unknown", "Engine", "Graphics", "Audio", "Physics", "Gameplay", "Assets",
-	    "Scripting", "Network", "Platform", "Input", "Tools");
-
 	// Allocates size bytes at the power-of-two alignment, charged to tag.
 	// Failure calls out_of_memory() instead of returning null. A zero-size request
 	// still gets its own block. where defaults to the caller's source location.
@@ -73,55 +69,4 @@ namespace ember::memory
 	// The object exists for the whole run, but its backing storage belongs to
 	// initialize() and shutdown().
 	Allocator* heap();
-
-	// Heap usage thresholds in Tag order. Tracking builds warn once when a tag
-	// reaches its budget; the warning does not reject the allocation.
-	inline constexpr u64 TAG_BUDGETS[TAG_COUNT] = {
-	    256_mb, // Unknown
-	    64_mb,  // Engine
-	    512_mb, // Graphics
-	    64_mb,  // Audio
-	    128_mb, // Physics
-	    128_mb, // Gameplay
-	    512_mb, // Assets
-	    64_mb,  // Scripting
-	    64_mb,  // Network
-	    64_mb,  // Platform
-	    64_mb,  // Input
-	    64_mb,  // Tools
-	};
-
-	// Heap counters record requested bytes, excluding headers and allocator overhead.
-	// arena_bytes sums each registered arena's requests since its last begin(),
-	// including one byte for each zero-size request. Those counts remain until
-	// the arena begins again. Arena requests do not count against the heap budget.
-	struct TagStats
-	{
-		u64 current_bytes = 0;
-		u64 peak_bytes = 0;
-		u64 current_count = 0;
-		u64 total_count = 0;
-		u64 arena_bytes = 0;
-	};
-
-	// Reads one tag's counters, or the totals across all tags and registered arenas.
-	// Concurrent allocations may change individual counters during the read.
-	// Returns zeros at tracking level 0.
-	TagStats stats(Tag tag);
-	TagStats total();
-
-	// Prints heap and arena usage by tag, followed by the partition totals.
-	// Does nothing at tracking level 0.
-	void report();
-
-	// Reports outstanding heap allocations and returns their count. Call after
-	// owners have released their memory to use this as a leak report.
-	// Level 2 lists individual blocks and available source locations; level 1
-	// groups them by tag. Returns zero at tracking level 0.
-	u32 report_leaks();
-
-	// Requests a debugger break when allocation number is recorded.
-	// Zero clears the request. Reproducing a number requires the same allocation
-	// order, including across threads. Has no effect below tracking level 2.
-	void break_on_allocation(u64 number);
 }
