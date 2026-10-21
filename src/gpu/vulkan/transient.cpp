@@ -29,6 +29,11 @@ namespace ember::gpu
 		constexpr u64 CHUNK_BYTES = 64_kb;
 		constexpr u64 CHUNK_ALIGNMENT = 256;
 
+		// Staging copies start on sixteen bytes: a multiple of every texel block size in
+		// TextureFormat and of the four bytes a buffer copy needs, so the ring's power-of-two
+		// path serves every upload.
+		constexpr u64 STAGING_ALIGNMENT = 16;
+
 		// Allocate one cursor per worker in every frame slot. The buffer already exists, and
 		// these arrays stay fixed until shutdown.
 		void init_slices(vk::Backend& b, vk::Ring& ring)
@@ -58,11 +63,14 @@ namespace ember::gpu
 				return false;
 			}
 
+			const vk::BufferSharing sharing = vk::buffer_sharing(b.ctx);
 			const VkBufferCreateInfo info{
 			    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 			    .size = bytes,
 			    .usage = usage,
-			    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+			    .sharingMode = sharing.mode,
+			    .queueFamilyIndexCount = sharing.count,
+			    .pQueueFamilyIndices = sharing.families,
 			};
 
 			VmaAllocationCreateInfo allocation_info = {};
@@ -151,20 +159,6 @@ namespace ember::gpu
 			slot.upload_open = true;
 			return commands;
 		}
-
-		// Find a multiple of both sixteen and the format's texel-block size for staging copies.
-		// A twelve-byte block produces 48, which the ring's power-of-two alignment path does
-		// not support.
-		u64 staging_alignment(u32 block_bytes)
-		{
-			u64 alignment = 16;
-			while (alignment % block_bytes != 0)
-			{
-				alignment += 16;
-			}
-
-			return alignment;
-		}
 	}
 
 	namespace vk
@@ -184,13 +178,16 @@ namespace ember::gpu
 
 			// Create this buffer directly because constants need uniform-buffer usage, which the
 			// public BufferDef does not expose. Other transient uses share the same allocation.
+			const BufferSharing sharing = buffer_sharing(b.ctx);
 			const VkBufferCreateInfo info{
 			    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 			    .size = bytes,
 			    .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
 			             VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
 			             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+			    .sharingMode = sharing.mode,
+			    .queueFamilyIndexCount = sharing.count,
+			    .pQueueFamilyIndices = sharing.families,
 			};
 
 			// Prefer device-local memory for GPU reads, while requiring a coherent CPU mapping.
@@ -379,7 +376,7 @@ namespace ember::gpu
 		}
 
 		vk::Slot& slot = vk::slot_of(*b, frame.index);
-		EMBER_ASSERT_MSG(!slot.closed, "transient memory for a frame that has ended");
+		EMBER_ASSERT_MSG(vk::is_open(slot), "transient memory for a frame that has ended");
 
 		const vk::RingSpan span =
 		    vk::ring_allocate(b->transient, (u32)(frame.index % b->ctx.in_flight), size, alignment);
@@ -420,10 +417,11 @@ namespace ember::gpu
 		}
 
 		vk::Slot& slot = vk::slot_of(*b, frame.index);
-		EMBER_ASSERT_MSG(!slot.closed, "an upload for a frame that has ended");
+		EMBER_ASSERT_MSG(vk::is_open(slot), "an upload for a frame that has ended");
 
 		const u32 slot_index = (u32)(frame.index % b->ctx.in_flight);
-		const vk::RingSpan stage = vk::ring_allocate(b->staging, slot_index, data.size(), 16);
+		const vk::RingSpan stage =
+		    vk::ring_allocate(b->staging, slot_index, data.size(), STAGING_ALIGNMENT);
 		if (stage.cpu == nullptr)
 		{
 			return false;
@@ -498,11 +496,12 @@ namespace ember::gpu
 		}
 
 		vk::Slot& slot = vk::slot_of(*b, frame.index);
-		EMBER_ASSERT_MSG(!slot.closed, "an upload for a frame that has ended");
+		EMBER_ASSERT_MSG(vk::is_open(slot), "an upload for a frame that has ended");
 
+		EMBER_ASSERT(STAGING_ALIGNMENT % format_info(cold.api_format).block_bytes == 0);
 		const u32 slot_index = (u32)(frame.index % b->ctx.in_flight);
-		const vk::RingSpan stage = vk::ring_allocate(b->staging, slot_index, data.size(),
-		    staging_alignment(format_info(cold.api_format).block_bytes));
+		const vk::RingSpan stage =
+		    vk::ring_allocate(b->staging, slot_index, data.size(), STAGING_ALIGNMENT);
 		if (stage.cpu == nullptr)
 		{
 			return false;
@@ -521,8 +520,9 @@ namespace ember::gpu
 		}
 
 		// Replace the whole subresource, so its previous contents can be discarded. Finish in
-		// the layout expected by its read descriptors. Earlier uses on other queues must have
-		// been synchronized separately; these barriers only cover the graphics queue.
+		// the state the texture rests in by its usage, which is the layout its descriptors expect
+		// where a shader can read it. Earlier uses on other queues must have been synchronized
+		// separately; these barriers only cover the graphics queue.
 		const VkImageSubresourceRange range{vk::aspect_of(cold.api_format), mip, 1, layer, 1};
 		const VkImageMemoryBarrier2 to_copy{
 		    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -568,7 +568,7 @@ namespace ember::gpu
 		    .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 		    .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
 		    .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		    .newLayout = cold.read_layout,
+		    .newLayout = vk::layout_of(cold, vk::uploaded_state(cold.usage)),
 		    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		    .image = hot->image,

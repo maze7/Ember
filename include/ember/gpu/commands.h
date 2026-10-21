@@ -59,6 +59,14 @@ namespace ember::gpu
 		u32 mip_count = ALL_MIPS;
 		u32 base_layer = 0;
 		u32 layer_count = ALL_LAYERS;
+
+		// Moves ownership between queues with separate families. Record the same
+		// barrier at the end of the releasing queue's list and at the start of the
+		// acquiring queue's list, and make the acquiring submission wait on the
+		// releasing one. When the two queues share a family the acquiring list
+		// records nothing, so callers need not special-case such adapters.
+		Queue from = Queue::Graphics;
+		Queue to = Queue::Graphics;
 	};
 
 	// Describes buffer access for a dependency. Buffers have no image layout;
@@ -96,6 +104,8 @@ namespace ember::gpu
 		Count
 	};
 
+	// Integer formats take each channel's truncated whole number, so 1.0f clears
+	// an R32Uint attachment to 1.
 	struct ClearColor
 	{
 		f32 r = 0.0f;
@@ -166,8 +176,11 @@ namespace ember::gpu
 	              sizeof(DispatchIndirectArgs) == 12);
 
 	// Records dependencies for the named resource accesses on this list's queue.
-	// Texture barriers also change image layouts. Record outside render passes;
-	// use submission waits to synchronize work on a different queue.
+	// Texture barriers also change image layouts and, between queues of different
+	// families, transfer ownership. Record outside render passes, with states the
+	// list's queue supports: a transfer list has no shader stages. Buffers are
+	// shared by every queue and need no transfer; use submission waits to
+	// synchronize work on a different queue.
 	void barrier(CommandList* list, Span<const TextureBarrier> textures,
 	    Span<const BufferBarrier> buffers = {});
 

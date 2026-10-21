@@ -108,6 +108,51 @@ namespace ember::gpu
 			};
 		}
 
+		// Remember the state a list leaves an acquired backbuffer in, one entry per swapchain. A
+		// later barrier on the same swapchain's image replaces the earlier entry.
+		void note_backbuffer(CommandList& list, SwapchainHandle swapchain, u32 image,
+		    TextureState state)
+		{
+			for (u32 i = 0; i < list.backbuffer_count; ++i)
+			{
+				CommandList::BackbufferUse& use = list.backbuffers[i];
+				if (use.swapchain == swapchain)
+				{
+					use.image = image;
+					use.state = state;
+					return;
+				}
+			}
+
+			if (list.backbuffer_count < vk::MAX_SWAPCHAINS)
+			{
+				list.backbuffers[list.backbuffer_count++] = {swapchain, image, state};
+			}
+		}
+
+		// Integer attachments clear through the union's integer view. Writing floats there would
+		// store the float's bit pattern: 1.0f becomes 1065353216.
+		VkClearColorValue clear_value(const ClearColor& clear, bool integer)
+		{
+			VkClearColorValue value;
+			if (integer)
+			{
+				value.uint32[0] = (u32)(i64)clear.r;
+				value.uint32[1] = (u32)(i64)clear.g;
+				value.uint32[2] = (u32)(i64)clear.b;
+				value.uint32[3] = (u32)(i64)clear.a;
+			}
+			else
+			{
+				value.float32[0] = clear.r;
+				value.float32[1] = clear.g;
+				value.float32[2] = clear.b;
+				value.float32[3] = clear.a;
+			}
+
+			return value;
+		}
+
 		u32 zone_query(const vk::Backend& b, const CommandList& list, u32 zone)
 		{
 			return ((list.slot * (b.ctx.max_lists + 1)) + list.index) * vk::MAX_ZONES * 2 +
@@ -153,6 +198,7 @@ namespace ember::gpu
 			}
 
 			EMBER_ASSERT_MSG(!list->inside_pass, "dispatches record outside render passes");
+			EMBER_ASSERT_MSG(list->queue != Queue::Transfer, "a dispatch on the transfer queue");
 			EMBER_ASSERT_MSG(!list->compute_pipeline.is_null(),
 			    "a dispatch with no pipeline bound");
 			flush_constants(*vk::backend(), list, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -225,6 +271,29 @@ namespace ember::gpu
 
 			EMBER_UNREACHABLE();
 		}
+
+		VkImageLayout layout_of(const TextureCold& cold, TextureState state)
+		{
+			return state == TextureState::ShaderRead
+			           ? cold.read_layout
+			           : state_info(state, VK_PIPELINE_STAGE_2_NONE).layout;
+		}
+
+		VkPipelineStageFlags2 shader_stages_of(const Context& ctx, Queue queue)
+		{
+			switch (queue)
+			{
+				case Queue::Graphics:
+					return ctx.all_shader_stages;
+				case Queue::Compute:
+					return VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+				case Queue::Transfer:
+				case Queue::Count:
+					break;
+			}
+
+			return VK_PIPELINE_STAGE_2_NONE;
+		}
 	}
 
 	void barrier(CommandList* list, Span<const TextureBarrier> textures,
@@ -238,7 +307,7 @@ namespace ember::gpu
 		EMBER_ASSERT_MSG(!list->inside_pass, "barriers record outside render passes");
 
 		vk::Backend& b = *vk::backend();
-		const VkPipelineStageFlags2 shader_stages = b.ctx.all_shader_stages;
+		const VkPipelineStageFlags2 shader_stages = vk::shader_stages_of(b.ctx, list->queue);
 
 		constexpr u32 BATCH = 8;
 		VkImageMemoryBarrier2 images[BATCH];
@@ -263,6 +332,7 @@ namespace ember::gpu
 		for (const TextureBarrier& barrier : textures)
 		{
 			EMBER_ASSERT_MSG(barrier.after != TextureState::Undefined, "a transition into garbage");
+			EMBER_ASSERT(barrier.from < Queue::Count && barrier.to < Queue::Count);
 
 			const vk::TextureHot* hot = b.textures.get(barrier.texture);
 			if (hot == nullptr)
@@ -272,18 +342,41 @@ namespace ember::gpu
 			}
 
 			const vk::TextureCold& cold = b.texture_cold[barrier.texture.index()];
+			EMBER_ASSERT_MSG((barrier.before != TextureState::ShaderRead &&
+			                     barrier.after != TextureState::ShaderRead) ||
+			                     has_any(cold.usage, TextureUsage::Sampled | TextureUsage::Storage),
+			    "ShaderRead on a texture no shader can read");
+
+			// An ownership transfer is two halves of one barrier: a release on the giving queue
+			// and an acquire on the taking one, with the same layouts. Queues of one family own
+			// nothing separately, so there the release half is an ordinary barrier and the
+			// acquire half records nothing.
+			const u32 from_family = vk::queue_for(b, barrier.from).family;
+			const u32 to_family = vk::queue_for(b, barrier.to).family;
+			const bool transfer = from_family != to_family;
+			EMBER_ASSERT_MSG(!transfer || list->queue == barrier.from || list->queue == barrier.to,
+			    "an ownership transfer recorded on a queue it does not involve");
+			if (!transfer && barrier.from != barrier.to && list->queue == barrier.to)
+			{
+				continue;
+			}
+
 			vk::StateInfo src = vk::state_info(barrier.before, shader_stages);
 			vk::StateInfo dst = vk::state_info(barrier.after, shader_stages);
+			src.layout = vk::layout_of(cold, barrier.before);
+			dst.layout = vk::layout_of(cold, barrier.after);
 
-			// Storage textures keep GENERAL for reads too, matching the layout in their
-			// descriptors.
-			if (barrier.before == TextureState::ShaderRead)
+			// The scope on the far side of a transfer does not apply, and it may name stages this
+			// queue lacks, so leave it empty: the submission wait between the halves orders them.
+			if (transfer && list->queue == barrier.from)
 			{
-				src.layout = cold.read_layout;
+				dst.stages = VK_PIPELINE_STAGE_2_NONE;
+				dst.access = VK_ACCESS_2_NONE;
 			}
-			if (barrier.after == TextureState::ShaderRead)
+			if (transfer && list->queue == barrier.to)
 			{
-				dst.layout = cold.read_layout;
+				src.stages = VK_PIPELINE_STAGE_2_NONE;
+				src.access = VK_ACCESS_2_NONE;
 			}
 
 			images[image_count++] = {
@@ -294,8 +387,8 @@ namespace ember::gpu
 			    .dstAccessMask = dst.access,
 			    .oldLayout = src.layout,
 			    .newLayout = dst.layout,
-			    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			    .srcQueueFamilyIndex = transfer ? from_family : VK_QUEUE_FAMILY_IGNORED,
+			    .dstQueueFamilyIndex = transfer ? to_family : VK_QUEUE_FAMILY_IGNORED,
 			    .image = hot->image,
 			    .subresourceRange =
 			        {
@@ -304,20 +397,17 @@ namespace ember::gpu
 			            barrier.mip_count == ALL_MIPS ? VK_REMAINING_MIP_LEVELS : barrier.mip_count,
 			            barrier.base_layer,
 			            barrier.layer_count == ALL_LAYERS ? VK_REMAINING_ARRAY_LAYERS
-						                                  : barrier.layer_count,
+			                                              : barrier.layer_count,
 			        },
 			};
 
-			// Remember recorded backbuffer transitions so end_frame() can supply any final
-			// transition to Present. Callers still have to order the command lists containing those
-			// transitions.
+			// Remember the state this list leaves an acquired backbuffer in. submit() folds it
+			// into the frame's pending present in submission order; no shared state changes here.
 			if (!cold.swapchain.is_null())
 			{
-				if (vk::SwapchainData* data = b.swapchains.get(cold.swapchain);
-				    data != nullptr && data->acquired_image == cold.backbuffer_index)
-				{
-					data->acquired_state = barrier.after;
-				}
+				EMBER_ASSERT_MSG(list->queue == Queue::Graphics,
+				    "a backbuffer on a queue that cannot present");
+				note_backbuffer(*list, cold.swapchain, cold.backbuffer_index, barrier.after);
 			}
 
 			if (image_count == BATCH)
@@ -398,6 +488,8 @@ namespace ember::gpu
 		}
 
 		EMBER_ASSERT_MSG(!list->inside_pass, "a render pass is already open");
+		EMBER_ASSERT_MSG(list->queue == Queue::Graphics,
+		    "a render pass on a queue that cannot draw");
 		EMBER_ASSERT(def.colors.size() <= MAX_COLOR_ATTACHMENTS);
 		EMBER_ASSERT_MSG(!def.colors.empty() || !def.depth.texture.is_null(),
 		    "a pass with nothing");
@@ -427,8 +519,8 @@ namespace ember::gpu
 			    .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 			    .loadOp = to_vk(attachment.load),
 			    .storeOp = to_vk(attachment.store),
-			    .clearValue = {.color = {.float32 = {attachment.clear.r, attachment.clear.g,
-			                                 attachment.clear.b, attachment.clear.a}}},
+			    .clearValue = {.color = clear_value(attachment.clear,
+			                       format_info(cold.api_format).integer)},
 			};
 		}
 
@@ -560,6 +652,7 @@ namespace ember::gpu
 		}
 
 		EMBER_ASSERT(size != 0 && size <= PUSH_CONSTANT_BYTES && size % 4 == 0);
+		EMBER_ASSERT_MSG(list->queue != Queue::Transfer, "push constants on the transfer queue");
 
 		// Every pipeline shares this layout, so push constants can be recorded before a bind.
 		vkCmdPushConstants(list->commands, vk::backend()->heap.pipeline_layout, VK_SHADER_STAGE_ALL,
@@ -916,9 +1009,11 @@ namespace ember::gpu
 			vkCmdBeginDebugUtilsLabelEXT(list->commands, &label);
 		}
 
-		// Keep debug labels and nesting after the timestamp slots run out. Only timing is lost.
+		// Keep debug labels and nesting after the timestamp slots run out, and on a queue whose
+		// family cannot write timestamps. Only timing is lost.
 		u8 claimed = vk::ZONE_UNTIMED;
-		if (b.timestamps != VK_NULL_HANDLE && list->zone_count < vk::MAX_ZONES)
+		if (b.timestamps != VK_NULL_HANDLE && vk::queue_for(b, list->queue).timestamps &&
+		    list->zone_count < vk::MAX_ZONES)
 		{
 			claimed = (u8)list->zone_count++;
 			vkCmdWriteTimestamp2(list->commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, b.timestamps,

@@ -45,7 +45,7 @@ if(EMBER_BUILD_PLATFORM)
 	)
 endif()
 
-if(EMBER_BUILD_GRAPHICS)
+if(EMBER_BUILD_GPU)
 	ember_add_module(gpu
 		SOURCES
 			gpu/types.cpp

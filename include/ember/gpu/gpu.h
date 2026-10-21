@@ -204,7 +204,7 @@ namespace ember::gpu
 		u32 size = 0;
 	};
 
-	// Ended command lists belonging to this frame and the dependencies to wait on.
+	// Ended command lists begun for this queue, and the dependencies to wait on.
 	// Lists are submitted in the supplied order. Resource hazards still require
 	// barriers, and uses on independent queues need the appropriate timeline waits.
 	struct SubmitDef
@@ -275,10 +275,13 @@ namespace ember::gpu
 	// This tracks GPU work rather than the image reaching the display.
 	void wait_frame(Frame& frame);
 
-	// Opens a list in the frame's fixed recording storage. Keep name alive through
-	// the frame for diagnostics. Exhaustion logs and returns null; recording is
-	// exclusive to the caller until the ended list is handed to a submitter.
-	[[nodiscard]] CommandList* begin_command_list(const Frame& frame, const char* name);
+	// Opens a list in the frame's fixed recording storage for one queue, which is
+	// the queue it must be submitted to; a logical queue without a dedicated family
+	// records for the graphics queue it shares. Keep name alive through the frame
+	// for diagnostics. Exhaustion logs and returns null; recording is exclusive to
+	// the caller until the ended list is handed to a submitter.
+	[[nodiscard]] CommandList* begin_command_list(const Frame& frame, const char* name,
+	    Queue queue = Queue::Graphics);
 
 	// Ends recording after all passes and zones are closed. Submit the list once,
 	// from this job or another, before ending its frame.
@@ -344,7 +347,9 @@ namespace ember::gpu
 	// Copies data into staging storage before returning, then records a GPU copy
 	// ahead of the next graphics submission that flushes the batch. Consumers on
 	// independent queues wait on that submission. Texture data replaces one whole,
-	// tightly packed mip and layer, including block rows, and ends in ShaderRead.
+	// tightly packed mip and layer, including block rows. The texture ends in
+	// ShaderRead when a shader can read it, in ColorTarget or DepthTarget when it
+	// is only an attachment, and in CopyDst when it is only a copy target.
 	// Order prior uses and avoid overlapping writes without explicit dependencies.
 	// Invalid requests, exhausted staging, or a full upload-batch table return false;
 	// capacity failures can be retried in a later frame.

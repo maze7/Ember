@@ -106,7 +106,6 @@ namespace ember::gpu
 		BGRA8Srgb,
 		R16Float,
 		RG16Float,
-		RGB32Float,
 		RGBA16Float,
 		R32Float,
 		RG32Float,
@@ -129,6 +128,8 @@ namespace ember::gpu
 
 	// Describes the bytes and texel dimensions of one format block. Uncompressed
 	// formats use 1x1 blocks, so upload and mip-size calculations share the same rules.
+	// Integer formats hold whole numbers rather than normalized values, which
+	// changes how a clear value is written.
 	struct FormatInfo
 	{
 		u8 block_bytes = 0;
@@ -136,6 +137,7 @@ namespace ember::gpu
 		u8 block_height = 1;
 		bool depth = false;
 		bool compressed = false;
+		bool integer = false;
 	};
 
 	FormatInfo format_info(TextureFormat format);
@@ -179,8 +181,8 @@ namespace ember::gpu
 
 	// Describes storage without initial pixels; upload or a render pass fills it.
 	// name is borrowed during creation for diagnostics. Only 3D textures use depth
-	// above one; array layers are explicit, with six layers for a cube.
-	// Multisampled textures are 2D attachments with one mip, filled by rendering.
+	// above one; array layers are explicit, with six layers for a cube. usage names
+	// at least one shader or attachment use; a copy-only image would have no view.
 	struct TextureDef
 	{
 		const char* name = "texture";
@@ -189,7 +191,6 @@ namespace ember::gpu
 		u32 layers = 1;
 		TextureFormat format = TextureFormat::RGBA8Srgb;
 		u32 mip_count = 1;
-		u8 sample_count = 1;
 		TextureUsage usage = TextureUsage::Sampled;
 	};
 

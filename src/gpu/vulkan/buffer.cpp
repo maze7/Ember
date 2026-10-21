@@ -36,6 +36,25 @@ namespace ember::gpu
 		}
 	}
 
+	namespace vk
+	{
+		BufferSharing buffer_sharing(const Context& ctx)
+		{
+			BufferSharing sharing;
+			if (ctx.queue_count > 1)
+			{
+				sharing.mode = VK_SHARING_MODE_CONCURRENT;
+				sharing.count = ctx.queue_count;
+				for (u32 i = 0; i < ctx.queue_count; ++i)
+				{
+					sharing.families[i] = ctx.queues[i].family;
+				}
+			}
+
+			return sharing;
+		}
+	}
+
 	BufferHandle create_buffer(const BufferDef& def)
 	{
 		vk::Backend* b = vk::backend();
@@ -50,11 +69,14 @@ namespace ember::gpu
 			return {};
 		}
 
+		const vk::BufferSharing sharing = vk::buffer_sharing(b->ctx);
 		const VkBufferCreateInfo info{
 		    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		    .size = def.size,
 		    .usage = to_vk_usage(def.usage),
-		    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		    .sharingMode = sharing.mode,
+		    .queueFamilyIndexCount = sharing.count,
+		    .pQueueFamilyIndices = sharing.families,
 		};
 
 		VmaAllocationCreateInfo allocation_info = {};

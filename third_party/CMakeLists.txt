@@ -25,7 +25,7 @@ endif()
 
 # Vulkan behind volk, which loads every entry point itself so nothing links libvulkan, and VMA for
 # device memory. Both are private to ember::gpu.
-if(EMBER_BUILD_GRAPHICS)
+if(EMBER_BUILD_GPU)
 	set(VOLK_PULL_IN_VULKAN ON CACHE BOOL "" FORCE)
 	add_subdirectory(volk EXCLUDE_FROM_ALL)
 	add_subdirectory(vma EXCLUDE_FROM_ALL)

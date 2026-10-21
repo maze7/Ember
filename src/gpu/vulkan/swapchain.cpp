@@ -138,20 +138,64 @@ namespace ember::gpu
 			};
 		}
 
-		// Invalidate backbuffer handles now and put their views and present semaphores in the
-		// frame-stamped graveyard. The swapchain continues to own the native images.
+		struct FenceWait
+		{
+			VkDevice device = VK_NULL_HANDLE;
+			VkFence fence = VK_NULL_HANDLE;
+			VkResult result = VK_SUCCESS;
+		};
+
+		void fence_wait_job(void* data)
+		{
+			FenceWait& wait = *(FenceWait*)data;
+			wait.result = vkWaitForFences(wait.device, 1, &wait.fence, VK_TRUE, UINT64_MAX);
+		}
+
+		// Wait for the image's armed present fence, parking the fiber while presentation is still
+		// using the image and its semaphore, then disarm the fence for the next present. Without
+		// present fences there is nothing to wait for, and the caller relies on the image having
+		// been reacquired.
+		void wait_present(vk::Backend& b, vk::SwapchainData& data, u32 image)
+		{
+			if (!data.present_pending[image])
+			{
+				return;
+			}
+
+			FenceWait wait{.device = b.ctx.device, .fence = data.present_fences[image]};
+			wait.result = vkWaitForFences(wait.device, 1, &wait.fence, VK_TRUE, 0);
+			if (wait.result == VK_TIMEOUT)
+			{
+				vk::run_blocking(fence_wait_job, &wait, "gpu present wait");
+			}
+
+			vk::note_result(b, wait.result);
+			EMBER_VK_CHECK(vkResetFences(wait.device, 1, &wait.fence));
+			data.present_pending[image] = false;
+		}
+
+		// Invalidate backbuffer handles now and put their views, present semaphores and fences in
+		// the frame-stamped graveyard. The stamp covers our own queue work, not presentation, so
+		// wait out every armed present fence first. The swapchain continues to own the images.
 		void retire_images(vk::Backend& b, vk::SwapchainData& data)
 		{
 			for (u32 i = 0; i < data.image_count; ++i)
 			{
+				wait_present(b, data, i);
 				vk::release_backbuffer(b, data.images[i]);
 				data.images[i] = {};
 
 				b.resources_lock.lock();
 				vk::bury(b,
 				    {.kind = vk::Dead::Kind::Semaphore, .handle = (u64)data.present_semaphores[i]});
+				if (data.present_fences[i] != VK_NULL_HANDLE)
+				{
+					vk::bury(b,
+					    {.kind = vk::Dead::Kind::Fence, .handle = (u64)data.present_fences[i]});
+				}
 				b.resources_lock.unlock();
 				data.present_semaphores[i] = VK_NULL_HANDLE;
+				data.present_fences[i] = VK_NULL_HANDLE;
 			}
 
 			data.image_count = 0;
@@ -204,6 +248,17 @@ namespace ember::gpu
 			VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 			usage |= caps.supportedUsageFlags &
 			         (VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+
+			// Backbuffers are color targets, plus whatever copies the surface allowed.
+			TextureUsage texture_usage = TextureUsage::ColorTarget;
+			if ((usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0)
+			{
+				texture_usage = texture_usage | TextureUsage::CopySrc;
+			}
+			if ((usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0)
+			{
+				texture_usage = texture_usage | TextureUsage::CopyDst;
+			}
 
 			const VkSwapchainKHR old = data.swapchain;
 			const VkSwapchainCreateInfoKHR info{
@@ -263,6 +318,7 @@ namespace ember::gpu
 			const TextureFormat format = vk::from_vk(data.surface_format.format);
 			const VkSemaphoreCreateInfo semaphore_info{
 			    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+			const VkFenceCreateInfo fence_info{.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
 
 			for (u32 i = 0; i < count; ++i)
 			{
@@ -279,8 +335,15 @@ namespace ember::gpu
 				    vkCreateImageView(b.ctx.device, &view_info, &b.ctx.callbacks, &view));
 				EMBER_VK_CHECK(vkCreateSemaphore(b.ctx.device, &semaphore_info, &b.ctx.callbacks,
 				    &data.present_semaphores[i]));
+				if (b.ctx.present_fences)
+				{
+					EMBER_VK_CHECK(vkCreateFence(b.ctx.device, &fence_info, &b.ctx.callbacks,
+					    &data.present_fences[i]));
+				}
+				data.present_pending[i] = false;
 
-				data.images[i] = vk::wrap_backbuffer(b, images[i], view, extent, format, handle, i);
+				data.images[i] = vk::wrap_backbuffer(b, images[i], view, extent, format,
+				    texture_usage, handle, i);
 				data.image_count = i + 1;
 
 				if (data.images[i].is_null())
@@ -362,7 +425,7 @@ namespace ember::gpu
 		{
 			for (u32 i = 0; i < slot.present_count; ++i)
 			{
-				const PendingPresent& pending = slot.presents[i];
+				PendingPresent& pending = slot.presents[i];
 				SwapchainData* data = b.swapchains.get(pending.swapchain);
 				if (data == nullptr)
 				{
@@ -370,12 +433,12 @@ namespace ember::gpu
 				}
 
 				const TextureHot* hot = b.textures.get(data->images[pending.image]);
-				if (hot == nullptr || data->acquired_state == TextureState::Present)
+				if (hot == nullptr || pending.state == TextureState::Present)
 				{
 					continue;
 				}
 
-				TextureState state = data->acquired_state;
+				TextureState state = pending.state;
 
 				// An untouched acquired image has no contents worth presenting. Clear it before the
 				// final transition so a frame with no draws still has a defined result.
@@ -408,7 +471,7 @@ namespace ember::gpu
 
 				image_barrier(commands, hot->image, state, TextureState::Present,
 				    b.ctx.all_shader_stages);
-				data->acquired_state = TextureState::Present;
+				pending.state = TextureState::Present;
 			}
 		}
 
@@ -444,6 +507,7 @@ namespace ember::gpu
 
 			VkSwapchainKHR swapchains[MAX_SWAPCHAINS];
 			VkSemaphore waits[MAX_SWAPCHAINS];
+			VkFence fences[MAX_SWAPCHAINS];
 			u32 images[MAX_SWAPCHAINS];
 			VkResult results[MAX_SWAPCHAINS];
 			SwapchainData* datas[MAX_SWAPCHAINS];
@@ -458,9 +522,15 @@ namespace ember::gpu
 					continue;
 				}
 
+				// The image's previous present must be done with its semaphore and fence before
+				// either is reused. Reacquiring the image makes that likely; the fence makes it
+				// certain.
+				wait_present(b, *data, pending.image);
+
 				datas[count] = data;
 				swapchains[count] = data->swapchain;
 				waits[count] = data->present_semaphores[pending.image];
+				fences[count] = data->present_fences[pending.image];
 				images[count] = pending.image;
 				++count;
 			}
@@ -471,8 +541,17 @@ namespace ember::gpu
 				return;
 			}
 
+			// A present fence signals once the presentation engine holds its own references to
+			// the image and the semaphore, which is when either may be reused or destroyed.
+			const VkSwapchainPresentFenceInfoEXT fence_info{
+			    .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT,
+			    .swapchainCount = count,
+			    .pFences = fences,
+			};
+
 			const VkPresentInfoKHR info{
 			    .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+			    .pNext = b.ctx.present_fences ? &fence_info : nullptr,
 			    .waitSemaphoreCount = count,
 			    .pWaitSemaphores = waits,
 			    .swapchainCount = count,
@@ -487,10 +566,12 @@ namespace ember::gpu
 			queue.lock.unlock();
 			note_result(b, result);
 
-			// Defer rebuilding until acquire(), which can choose the new extent and image
-			// generation.
+			// The request is enqueued even for a swapchain that reports itself out of date, so
+			// its fence is armed either way. Defer rebuilding until acquire(), which can choose
+			// the new extent and image generation.
 			for (u32 i = 0; i < count; ++i)
 			{
+				datas[i]->present_pending[images[i]] = b.ctx.present_fences;
 				if (results[i] == VK_ERROR_OUT_OF_DATE_KHR || results[i] == VK_SUBOPTIMAL_KHR)
 				{
 					datas[i]->needs_recreate = true;
@@ -585,7 +666,7 @@ namespace ember::gpu
 
 		const vk::Slot& acquirer = b->slots[data->acquired_frame % b->ctx.in_flight];
 		EMBER_ASSERT_MSG(data->acquired_frame == 0 ||
-		                     acquirer.frame_index != data->acquired_frame || acquirer.closed,
+		                     acquirer.frame_index != data->acquired_frame || !vk::is_open(acquirer),
 		    "a swapchain destroyed in the frame that acquired from it");
 		(void)acquirer;
 
@@ -638,7 +719,7 @@ namespace ember::gpu
 		}
 
 		vk::Slot& slot = vk::slot_of(*b, frame.index);
-		EMBER_ASSERT_MSG(!slot.closed, "an acquire for a frame that has ended");
+		EMBER_ASSERT_MSG(vk::is_open(slot), "an acquire for a frame that has ended");
 
 		EMBER_PROFILE_SCOPE_C("gpu: acquire", PROFILE_COLOR_WAIT);
 
@@ -705,11 +786,13 @@ namespace ember::gpu
 				data->needs_recreate |= wait.result == VK_SUBOPTIMAL_KHR;
 				data->acquired_image = wait.image;
 				data->acquired_frame = frame.index;
-				data->acquired_state = TextureState::Undefined;
 
+				// The image starts the frame as Undefined; submitted lists update the state.
 				slot.lock.lock();
 				EMBER_ASSERT(slot.present_count < vk::MAX_SWAPCHAINS);
-				slot.presents[slot.present_count++] = {.swapchain = swapchain, .image = wait.image};
+				slot.presents[slot.present_count++] = {.swapchain = swapchain,
+				    .image = wait.image,
+				    .state = TextureState::Undefined};
 				slot.acquire_waits[slot.acquire_wait_count++] = wait.semaphore;
 				slot.lock.unlock();
 

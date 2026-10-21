@@ -159,7 +159,7 @@ namespace ember::gpu
 			    .extent = {def.extent.width, def.extent.height, def.extent.depth},
 			    .mipLevels = def.mip_count,
 			    .arrayLayers = def.layers,
-			    .samples = (VkSampleCountFlagBits)def.sample_count,
+			    .samples = VK_SAMPLE_COUNT_1_BIT,
 			    .tiling = VK_IMAGE_TILING_OPTIMAL,
 			    .usage = to_vk_usage(def.usage),
 			    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -250,8 +250,27 @@ namespace ember::gpu
 
 	namespace vk
 	{
+		TextureState uploaded_state(TextureUsage usage)
+		{
+			if (has_any(usage, TextureUsage::Sampled | TextureUsage::Storage))
+			{
+				return TextureState::ShaderRead;
+			}
+			if (has_any(usage, TextureUsage::DepthTarget))
+			{
+				return TextureState::DepthTarget;
+			}
+			if (has_any(usage, TextureUsage::ColorTarget))
+			{
+				return TextureState::ColorTarget;
+			}
+
+			return TextureState::CopyDst;
+		}
+
 		TextureHandle wrap_backbuffer(Backend& b, VkImage image, VkImageView view,
-		    VkExtent2D extent, TextureFormat format, SwapchainHandle swapchain, u32 image_index)
+		    VkExtent2D extent, TextureFormat format, TextureUsage usage, SwapchainHandle swapchain,
+		    u32 image_index)
 		{
 			b.resources_lock.lock();
 			const TextureHandle handle =
@@ -264,6 +283,7 @@ namespace ember::gpu
 				cold.extent = {extent.width, extent.height, 1};
 				cold.format = to_vk(format);
 				cold.api_format = format;
+				cold.usage = usage;
 				cold.swapchain = swapchain;
 				cold.backbuffer_index = image_index;
 			}
@@ -347,6 +367,7 @@ namespace ember::gpu
 			cold.format = vk::to_vk(def.format);
 			cold.api_format = def.format;
 			cold.type = def.type;
+			cold.usage = def.usage;
 			cold.mip_count = def.mip_count;
 			cold.layer_count = def.layers;
 			cold.attachment_views = natives.attachment_views;

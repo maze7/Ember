@@ -8,40 +8,40 @@ namespace ember::gpu
 	namespace
 	{
 		// One row per TextureFormat, in enum order. Uncompressed formats are 1 by 1 blocks, so copy
-		// math never special cases BC.
+		// math never special cases BC. Every block size divides sixteen, which staging relies on.
 		constexpr FormatInfo FORMATS[] = {
-		    {0, 1, 1, false, false},  // Undefined
-		    {1, 1, 1, false, false},  // R8Unorm
-		    {2, 1, 1, false, false},  // RG8Unorm
-		    {4, 1, 1, false, false},  // RGBA8Unorm
-		    {4, 1, 1, false, false},  // RGBA8Srgb
-		    {4, 1, 1, false, false},  // BGRA8Unorm
-		    {4, 1, 1, false, false},  // BGRA8Srgb
-		    {2, 1, 1, false, false},  // R16Float
-		    {4, 1, 1, false, false},  // RG16Float
-		    {12, 1, 1, false, false}, // RGB32Float
-		    {8, 1, 1, false, false},  // RGBA16Float
-		    {4, 1, 1, false, false},  // R32Float
-		    {8, 1, 1, false, false},  // RG32Float
-		    {16, 1, 1, false, false}, // RGBA32Float
-		    {4, 1, 1, false, false},  // R32Uint
-		    {4, 1, 1, false, false},  // RG11B10Float
-		    {4, 1, 1, false, false},  // RGB10A2Unorm
-		    {4, 1, 1, true, false},   // D32Float
-		    {8, 4, 4, false, true},   // BC1Unorm
-		    {8, 4, 4, false, true},   // BC1Srgb
-		    {16, 4, 4, false, true},  // BC3Unorm
-		    {16, 4, 4, false, true},  // BC3Srgb
-		    {8, 4, 4, false, true},   // BC4Unorm
-		    {16, 4, 4, false, true},  // BC5Unorm
-		    {16, 4, 4, false, true},  // BC6HFloat
-		    {16, 4, 4, false, true},  // BC7Unorm
-		    {16, 4, 4, false, true},  // BC7Srgb
+		    {0, 1, 1, false, false, false},  // Undefined
+		    {1, 1, 1, false, false, false},  // R8Unorm
+		    {2, 1, 1, false, false, false},  // RG8Unorm
+		    {4, 1, 1, false, false, false},  // RGBA8Unorm
+		    {4, 1, 1, false, false, false},  // RGBA8Srgb
+		    {4, 1, 1, false, false, false},  // BGRA8Unorm
+		    {4, 1, 1, false, false, false},  // BGRA8Srgb
+		    {2, 1, 1, false, false, false},  // R16Float
+		    {4, 1, 1, false, false, false},  // RG16Float
+		    {8, 1, 1, false, false, false},  // RGBA16Float
+		    {4, 1, 1, false, false, false},  // R32Float
+		    {8, 1, 1, false, false, false},  // RG32Float
+		    {16, 1, 1, false, false, false}, // RGBA32Float
+		    {4, 1, 1, false, false, true},   // R32Uint
+		    {4, 1, 1, false, false, false},  // RG11B10Float
+		    {4, 1, 1, false, false, false},  // RGB10A2Unorm
+		    {4, 1, 1, true, false, false},   // D32Float
+		    {8, 4, 4, false, true, false},   // BC1Unorm
+		    {8, 4, 4, false, true, false},   // BC1Srgb
+		    {16, 4, 4, false, true, false},  // BC3Unorm
+		    {16, 4, 4, false, true, false},  // BC3Srgb
+		    {8, 4, 4, false, true, false},   // BC4Unorm
+		    {16, 4, 4, false, true, false},  // BC5Unorm
+		    {16, 4, 4, false, true, false},  // BC6HFloat
+		    {16, 4, 4, false, true, false},  // BC7Unorm
+		    {16, 4, 4, false, true, false},  // BC7Srgb
 		};
 
 		static_assert(sizeof(FORMATS) / sizeof(FORMATS[0]) == (u32)TextureFormat::Count,
 		    "FORMATS mirrors TextureFormat one to one");
 		static_assert(FORMATS[(u32)TextureFormat::D32Float].depth);
+		static_assert(FORMATS[(u32)TextureFormat::R32Uint].integer);
 		static_assert(FORMATS[(u32)TextureFormat::BC7Srgb].block_bytes == 16);
 	}
 
@@ -110,7 +110,15 @@ namespace ember::gpu
 		}
 
 		if (def.extent.width == 0 || def.extent.height == 0 || def.extent.depth == 0 ||
-		    def.layers == 0 || def.usage == TextureUsage::None)
+		    def.layers == 0)
+		{
+			return false;
+		}
+
+		// A texture is something a shader or a pass can see. A copy-only image would have no
+		// view, so it is refused here rather than at view creation.
+		if (!has_any(def.usage, TextureUsage::Sampled | TextureUsage::Storage |
+		                            TextureUsage::ColorTarget | TextureUsage::DepthTarget))
 		{
 			return false;
 		}
@@ -165,18 +173,6 @@ namespace ember::gpu
 		    def.mip_count > full_mip_count(def.extent))
 		{
 			return false;
-		}
-
-		// Multisampling is for attachments: one mip, 2D, a power of two up to eight.
-		if (def.sample_count != 1)
-		{
-			const bool power_of_two = (def.sample_count & (def.sample_count - 1)) == 0;
-			if (!power_of_two || def.sample_count > 8 || def.mip_count != 1 ||
-			    def.type != TextureType::Texture2D ||
-			    !has_any(def.usage, TextureUsage::ColorTarget | TextureUsage::DepthTarget))
-			{
-				return false;
-			}
 		}
 
 		return true;

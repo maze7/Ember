@@ -283,6 +283,13 @@ namespace ember::gpu
 			u32 compute_family = VK_QUEUE_FAMILY_IGNORED;
 			u32 transfer_family = VK_QUEUE_FAMILY_IGNORED;
 
+			// Timestamp support of each chosen family, in Queue order. A transfer-only family can
+			// have none.
+			u32 timestamp_bits[vk::QUEUE_COUNT] = {};
+
+			// The device half of swapchain maintenance exists and its feature is available.
+			bool present_fences = false;
+
 			bool memory_budget = false;
 			bool wireframe = false;
 			bool indirect_count = false;
@@ -463,6 +470,27 @@ namespace ember::gpu
 
 					enabled_extensions[extension_count++] = name;
 				}
+
+				// Present fences come with swapchain maintenance, whose device extension needs
+				// these two instance extensions enabled first. A loader without them only costs
+				// the fences; query_adapter() finishes the check on the device side.
+				constexpr const char* MAINTENANCE[] = {
+				    VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,
+				    VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME,
+				};
+
+				ctx.present_fences = extension_count + 2 <= MAX_ENABLED_NAMES;
+				for (const char* name : MAINTENANCE)
+				{
+					ctx.present_fences = ctx.present_fences && has_extension(extensions, name);
+				}
+				if (ctx.present_fences)
+				{
+					for (const char* name : MAINTENANCE)
+					{
+						enabled_extensions[extension_count++] = name;
+					}
+				}
 			}
 #endif
 
@@ -586,6 +614,22 @@ namespace ember::gpu
 
 			out.memory_budget = has_extension(extensions, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
+			// Present fences need the device extension and its feature bit on top of the instance
+			// extensions enabled earlier. The KHR promotion aliases these EXT names.
+			if (b.ctx.present_fences &&
+			    has_extension(extensions, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
+			{
+				VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance{
+				    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT,
+				};
+				VkPhysicalDeviceFeatures2 query{
+				    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+				    .pNext = &maintenance,
+				};
+				vkGetPhysicalDeviceFeatures2(handle, &query);
+				out.present_fences = maintenance.swapchainMaintenance1 == VK_TRUE;
+			}
+
 			Features available;
 			vkGetPhysicalDeviceFeatures2(handle, &available.base);
 
@@ -643,6 +687,15 @@ namespace ember::gpu
 			out.compute_family = find_family(families, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_GRAPHICS_BIT);
 			out.transfer_family = find_family(families, VK_QUEUE_TRANSFER_BIT,
 			    VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
+
+			const u32 chosen[vk::QUEUE_COUNT] = {out.graphics_family, out.compute_family,
+			    out.transfer_family};
+			for (u32 q = 0; q < vk::QUEUE_COUNT; ++q)
+			{
+				out.timestamp_bits[q] = chosen[q] != VK_QUEUE_FAMILY_IGNORED
+				                            ? families[chosen[q]].timestampValidBits
+				                            : 0;
+			}
 
 			VkPhysicalDeviceDriverProperties driver{
 			    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
@@ -780,7 +833,7 @@ namespace ember::gpu
 			enabled.vulkan12.drawIndirectCount = adapter.indirect_count ? VK_TRUE : VK_FALSE;
 			enabled.vulkan12.samplerFilterMinmax = adapter.sampler_minmax ? VK_TRUE : VK_FALSE;
 
-			const char* extensions[2];
+			const char* extensions[3];
 			u32 extension_count = 0;
 			if (!ctx.headless)
 			{
@@ -790,6 +843,18 @@ namespace ember::gpu
 			{
 				extensions[extension_count++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
 			}
+
+			// Present fences take the extension and its feature; query_adapter() found both.
+			VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance{
+			    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT,
+			    .swapchainMaintenance1 = VK_TRUE,
+			};
+			if (adapter.present_fences)
+			{
+				extensions[extension_count++] = VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
+				enabled.vulkan13.pNext = &maintenance;
+			}
+			ctx.present_fences = adapter.present_fences;
 
 			const VkDeviceCreateInfo info{
 			    .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -840,6 +905,7 @@ namespace ember::gpu
 				{
 					vk::QueueState& queue = ctx.queues[ctx.queue_count++];
 					queue.family = family;
+					queue.timestamps = adapter.timestamp_bits[q] != 0;
 					vkGetDeviceQueue(ctx.device, family, 0, &queue.handle);
 				}
 
@@ -993,41 +1059,47 @@ namespace ember::gpu
 			EMBER_ASSERT(limits.maxBoundDescriptorSets >= 2);
 		}
 
-		bool create_list(vk::Backend& b, CommandList& list, u32 slot, u32 index)
+		// Give the list a pool and buffer for each of the first [queues] native queues, so it can
+		// record for whichever of them begin_command_list() names. Its slot and index were set
+		// when it was constructed.
+		bool create_list(vk::Backend& b, CommandList& list, u32 queues)
 		{
-			list = CommandList{.slot = slot, .index = index};
-
-			const VkCommandPoolCreateInfo pool_info{
-			    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-			    .queueFamilyIndex = b.ctx.queues[0].family,
-			};
-
-			if (vkCreateCommandPool(b.ctx.device, &pool_info, &b.ctx.callbacks, &list.pool) !=
-			    VK_SUCCESS)
+			for (u32 q = 0; q < queues; ++q)
 			{
-				EMBER_ERROR("vulkan: command pool creation failed");
-				return false;
-			}
+				const VkCommandPoolCreateInfo pool_info{
+				    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+				    .queueFamilyIndex = b.ctx.queues[q].family,
+				};
 
-			const VkCommandBufferAllocateInfo buffer_info{
-			    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-			    .commandPool = list.pool,
-			    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-			    .commandBufferCount = 1,
-			};
+				if (vkCreateCommandPool(b.ctx.device, &pool_info, &b.ctx.callbacks,
+				        &list.pools[q]) != VK_SUCCESS)
+				{
+					EMBER_ERROR("vulkan: command pool creation failed");
+					return false;
+				}
 
-			if (vkAllocateCommandBuffers(b.ctx.device, &buffer_info, &list.commands) != VK_SUCCESS)
-			{
-				EMBER_ERROR("vulkan: command buffer allocation failed");
-				return false;
+				const VkCommandBufferAllocateInfo buffer_info{
+				    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+				    .commandPool = list.pools[q],
+				    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+				    .commandBufferCount = 1,
+				};
+
+				if (vkAllocateCommandBuffers(b.ctx.device, &buffer_info, &list.buffers[q]) !=
+				    VK_SUCCESS)
+				{
+					EMBER_ERROR("vulkan: command buffer allocation failed");
+					return false;
+				}
 			}
 
 			return true;
 		}
 
-		// Reserve each frame slot's lists and query result storage at boot. Every list gets a
-		// private command pool, while one query pool covers all slots when timestamps are
-		// available.
+		// Reserve each frame slot's lists and query result storage at boot. Every slot and list is
+		// constructed before the first call that can fail, so a failed boot tears down only
+		// objects that exist. Each list then gets a private command pool per queue, and one query
+		// pool covers all slots when timestamps are available.
 		bool create_slots(vk::Backend& b)
 		{
 			const u32 in_flight = b.ctx.in_flight;
@@ -1045,21 +1117,28 @@ namespace ember::gpu
 				    sizeof(CommandList) * max_lists, alignof(CommandList));
 				for (u32 i = 0; i < max_lists; ++i)
 				{
-					::new ((void*)(slot.lists + i)) CommandList();
+					::new ((void*)(slot.lists + i)) CommandList{.slot = s, .index = i};
 				}
 
+				slot.finish = CommandList{.slot = s, .index = max_lists};
 				slot.zones = (ZoneTiming*)memory::allocate_zeroed(memory::Tag::Graphics,
 				    sizeof(ZoneTiming) * zone_capacity, alignof(ZoneTiming));
+			}
+
+			for (u32 s = 0; s < in_flight; ++s)
+			{
+				vk::Slot& slot = b.slots[s];
 
 				for (u32 i = 0; i < max_lists; ++i)
 				{
-					if (!create_list(b, slot.lists[i], s, i))
+					if (!create_list(b, slot.lists[i], b.ctx.queue_count))
 					{
 						return false;
 					}
 				}
 
-				if (!create_list(b, slot.finish, s, max_lists))
+				// The finish list and the upload batches only ever go to the graphics queue.
+				if (!create_list(b, slot.finish, 1))
 				{
 					return false;
 				}
@@ -1113,6 +1192,8 @@ namespace ember::gpu
 			return true;
 		}
 
+		// Null pools and buffers are skipped by Vulkan, so this also unwinds a boot that failed
+		// partway through create_slots().
 		void destroy_slots(vk::Backend& b)
 		{
 			if (b.slots == nullptr)
@@ -1124,16 +1205,19 @@ namespace ember::gpu
 			{
 				vk::Slot& slot = b.slots[s];
 
-				if (slot.lists != nullptr)
+				for (u32 i = 0; i < b.ctx.max_lists; ++i)
 				{
-					for (u32 i = 0; i < b.ctx.max_lists; ++i)
+					for (const VkCommandPool pool : slot.lists[i].pools)
 					{
-						vkDestroyCommandPool(b.ctx.device, slot.lists[i].pool, &b.ctx.callbacks);
+						vkDestroyCommandPool(b.ctx.device, pool, &b.ctx.callbacks);
 					}
-					memory::free(slot.lists);
 				}
+				memory::free(slot.lists);
 
-				vkDestroyCommandPool(b.ctx.device, slot.finish.pool, &b.ctx.callbacks);
+				for (const VkCommandPool pool : slot.finish.pools)
+				{
+					vkDestroyCommandPool(b.ctx.device, pool, &b.ctx.callbacks);
+				}
 				vkDestroyCommandPool(b.ctx.device, slot.upload_pool, &b.ctx.callbacks);
 				memory::free(slot.zones);
 				slot.~Slot();
@@ -1294,13 +1378,13 @@ namespace ember::gpu
 			heap_bind_constants(b);
 
 			constexpr const char* KINDS[] = {"other", "integrated", "discrete", "virtual", "cpu"};
-			EMBER_INFO("vulkan: {} ({}) | {} | Vulkan {}.{}.{} | {} MB{} | {} queue{}",
+			EMBER_INFO("vulkan: {} ({}) | {} | Vulkan {}.{}.{} | {} MB{} | {} queue{}{}",
 			    ctx.caps.adapter_name, KINDS[(u32)ctx.caps.adapter_kind], adapter.driver,
 			    VK_API_VERSION_MAJOR(ctx.caps.api_version),
 			    VK_API_VERSION_MINOR(ctx.caps.api_version),
 			    VK_API_VERSION_PATCH(ctx.caps.api_version), ctx.caps.device_memory_bytes / 1_mb,
 			    ctx.caps.host_visible_device_memory ? " (resizable BAR)" : "", ctx.queue_count,
-			    ctx.queue_count == 1 ? "" : "s");
+			    ctx.queue_count == 1 ? "" : "s", ctx.present_fences ? " | present fences" : "");
 
 			return true;
 		}
