@@ -15,6 +15,7 @@
 // frame ring keeps what each frame saw.
 
 #include <ember/core/types.h>
+#include <ember/math/scalar.h>
 #include <ember/platform/window.h>
 
 namespace ember
@@ -366,7 +367,8 @@ namespace ember
 		// button prompts.
 		bool gamepad_in_use() const
 		{
-			const u64 desk = keyboard_ns > mouse_ns ? keyboard_ns : mouse_ns;
+			const u64 desk = max(keyboard_ns, mouse_ns);
+
 			for (const Gamepad& gamepad : gamepads)
 			{
 				if (gamepad.connected && gamepad.last_input_ns > desk)

@@ -23,7 +23,6 @@
 
 #include <cstddef>
 #include <initializer_list>
-#include <iterator>
 #include <type_traits>
 
 namespace ember
@@ -73,7 +72,6 @@ namespace ember
 		using pointer = T*;
 		using reference = T&;
 		using iterator = T*;
-		using reverse_iterator = std::reverse_iterator<iterator>;
 
 		// Constructs an empty view with a null data pointer.
 		constexpr Span() = default;
@@ -183,16 +181,6 @@ namespace ember
 		EMBER_FINLINE constexpr iterator end() const
 		{
 			return m_data + m_size;
-		}
-
-		EMBER_FINLINE constexpr reverse_iterator rbegin() const
-		{
-			return reverse_iterator(end());
-		}
-
-		EMBER_FINLINE constexpr reverse_iterator rend() const
-		{
-			return reverse_iterator(begin());
 		}
 
 		// Returns a view of the first [count] elements. [count] must not exceed size().

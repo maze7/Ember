@@ -1,13 +1,17 @@
-// The frame loop's side of the device: the slots, the command lists they hand out, the submits,
-// the waits on the timelines and the graveyard. A frame's slot is claimed at begin_frame(), closed
-// at end_frame() and complete once every queue has passed the frame's last submission on it, which
-// poll() looks for and wait_value() parks for.
+// Gives each frame a reusable slot for its command lists, uploads, and pending presents.
+// begin_frame() waits before reusing that storage; end_frame() closes it to further recording
+// and submission. The slot records the last timeline value submitted to each queue so polling
+// and waits can find when the frame's GPU work has finished.
+//
+// Resource destruction uses those frame completions too. Handles retire immediately, while
+// native objects and descriptor slots wait in the graveyard until their frame stamp can pass.
 
 #include <ember/gpu/gpu.h>
 
 #include <ember/core/frame.h>
 #include <ember/core/jobs.h>
 #include <ember/core/profile.h>
+#include <ember/math/scalar.h>
 #include <ember/memory/heap.h>
 #include <gpu/vulkan/backend.h>
 
@@ -19,10 +23,14 @@ namespace ember::gpu
 {
 	namespace
 	{
-		// One vkQueueSubmit2 carries this many lists; a bigger submit goes in chunks under the
-		// lock.
+		// Bound the temporary command-buffer array on the stack. Larger submits keep the queue
+		// lock while sending consecutive chunks.
 		constexpr u32 LISTS_PER_SUBMIT = 32;
 		constexpr u32 MAX_WAITS = 16;
+
+		// Move a small batch out of the graveyard, then drop the lock before calling the driver.
+		// More retired objects take another pass without growing the stack allocation.
+		constexpr u32 DRAIN_BATCH = 32;
 
 		struct TimelineWait
 		{
@@ -56,7 +64,8 @@ namespace ember::gpu
 			wait.result = vkDeviceWaitIdle(wait.device);
 		}
 
-		// Back to the state a list has between frames; the natives and its place stay.
+		// Clear recording state for the next frame while keeping the preallocated native objects
+		// and the list's position in the slot.
 		void reset_list(CommandList& list)
 		{
 			list = CommandList{.pool = list.pool,
@@ -83,7 +92,8 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Reads the ticks the frame's lists wrote into the slot's zone table, list order.
+		// Collect timestamp pairs in list order after the frame's GPU work has finished. The query
+		// results provide durations; names and nesting stayed with the command lists on the CPU.
 		void resolve_zones(vk::Backend& b, vk::Slot& slot)
 		{
 			slot.zone_count = 0;
@@ -93,7 +103,7 @@ namespace ember::gpu
 			}
 
 			const u32 opened = slot.opened.load(std::memory_order_acquire);
-			const u32 count = opened < b.ctx.max_lists ? opened : b.ctx.max_lists;
+			const u32 count = min(opened, b.ctx.max_lists);
 			const f32 period = b.ctx.caps.timestamp_period_ns;
 
 			for (u32 i = 0; i <= count; ++i)
@@ -128,7 +138,7 @@ namespace ember::gpu
 			}
 		}
 
-		// The frame's GPU work is done: once, whoever notices first.
+		// Only the first caller resolves timestamps and ends the frame's GPU stage.
 		void complete_slot(vk::Backend& b, vk::Slot& slot)
 		{
 			if (slot.complete.exchange(true, std::memory_order_acq_rel))
@@ -150,8 +160,39 @@ namespace ember::gpu
 			complete_slot(b, slot);
 		}
 
-		// Destroys one dead thing. The caller holds resources_lock; every call here is short.
-		void release(vk::Backend& b, const vk::Dead& dead)
+		// Descriptor slots must be reset before their indices return to the pool. Do both under
+		// resources_lock so creation cannot reuse an index halfway through its reset.
+		bool is_slot(vk::Dead::Kind kind)
+		{
+			return kind == vk::Dead::Kind::TextureSlot || kind == vk::Dead::Kind::BufferSlot ||
+			       kind == vk::Dead::Kind::SamplerSlot;
+		}
+
+		void release_slot(vk::Backend& b, const vk::Dead& dead)
+		{
+			switch (dead.kind)
+			{
+				case vk::Dead::Kind::TextureSlot:
+					vk::heap_reset_texture(b, (u32)dead.handle, b.texture_cold[dead.handle].type);
+					b.textures.release((u32)dead.handle);
+					break;
+				case vk::Dead::Kind::BufferSlot:
+					vk::heap_reset_buffer(b, (u32)dead.handle);
+					b.buffers.release((u32)dead.handle);
+					break;
+				case vk::Dead::Kind::SamplerSlot:
+					vk::heap_reset_sampler(b, (u32)dead.handle);
+					b.samplers.release((u32)dead.handle);
+					break;
+				default:
+					EMBER_ASSERT_MSG(false, "not a slot");
+					break;
+			}
+		}
+
+		// Driver destruction can take time, so release native objects after dropping the graveyard
+		// lock. CPU allocations retired with the resource follow the same path.
+		void release_native(vk::Backend& b, const vk::Dead& dead)
 		{
 			const VkAllocationCallbacks* callbacks = &b.ctx.callbacks;
 
@@ -179,18 +220,21 @@ namespace ember::gpu
 					vkDestroySwapchainKHR(b.ctx.device, (VkSwapchainKHR)dead.handle, callbacks);
 					break;
 				case vk::Dead::Kind::Surface:
-					// The platform made the surface without our callbacks, so it unmakes it.
+					// Match the platform's surface creation path, including its allocation
+					// callbacks.
 #if defined(EMBER_HAS_PLATFORM)
 					platform::vulkan::destroy_surface(b.ctx.instance, (VkSurfaceKHR)dead.handle);
 #else
 					vkDestroySurfaceKHR(b.ctx.instance, (VkSurfaceKHR)dead.handle, nullptr);
 #endif
 					break;
-				case vk::Dead::Kind::TextureSlot:
-					b.textures.release((u32)dead.handle);
-					break;
 				case vk::Dead::Kind::Memory:
 					memory::free((void*)dead.handle);
+					break;
+				case vk::Dead::Kind::TextureSlot:
+				case vk::Dead::Kind::BufferSlot:
+				case vk::Dead::Kind::SamplerSlot:
+					EMBER_ASSERT_MSG(false, "a slot is released under the lock");
 					break;
 			}
 		}
@@ -245,8 +289,9 @@ namespace ember::gpu
 
 		void run_blocking(jobs::JobFn fn, void* data, const char* name)
 		{
-			// A job or main parks while an IO thread blocks. A thread outside the scheduler blocks
-			// here itself, as does everyone when the IO lane is full or not running.
+			// Let an I/O thread do the blocking call while a scheduler fiber waits on its counter.
+			// Without an available I/O lane, or outside the scheduler, the caller does the work
+			// itself.
 			if (jobs::worker_index() != jobs::NO_WORKER)
 			{
 				jobs::Counter done;
@@ -273,7 +318,8 @@ namespace ember::gpu
 				return;
 			}
 
-			// A poll first: the common case is a frame that finished while the CPU ran ahead.
+			// Check the timeline before scheduling a blocking wait. The GPU may already have caught
+			// up while the CPU was doing other work.
 			u64 seen = 0;
 			if (vkGetSemaphoreCounterValue(b.ctx.device, queue.timeline, &seen) == VK_SUCCESS)
 			{
@@ -304,44 +350,72 @@ namespace ember::gpu
 
 		void drain(Backend& b, bool everything)
 		{
-			b.resources_lock.lock();
+			Dead batch[DRAIN_BATCH];
+			u32 count = 0;
 
-			// A frame begun and not complete keeps everything stamped with it or later.
-			u64 threshold = UINT64_MAX;
-			if (!everything)
+			do
 			{
-				for (u32 i = 0; i < b.ctx.in_flight; ++i)
+				count = 0;
+				b.resources_lock.lock();
+
+				// The oldest unfinished frame holds back its stamp and every later one. Retired
+				// objects with an earlier stamp can leave the graveyard.
+				u64 threshold = UINT64_MAX;
+				if (!everything)
 				{
-					const Slot& slot = b.slots[i];
-					if (slot.frame != nullptr && !slot.complete.load(std::memory_order_acquire) &&
-					    slot.frame_index < threshold)
+					for (u32 i = 0; i < b.ctx.in_flight; ++i)
 					{
-						threshold = slot.frame_index;
+						const Slot& slot = b.slots[i];
+						if (slot.frame != nullptr &&
+						    !slot.complete.load(std::memory_order_acquire) &&
+						    slot.frame_index < threshold)
+						{
+							threshold = slot.frame_index;
+						}
 					}
 				}
-			}
 
-			while (b.graveyard_head < b.graveyard.size() &&
-			       b.graveyard[b.graveyard_head].frame < threshold)
-			{
-				release(b, b.graveyard[b.graveyard_head]);
-				++b.graveyard_head;
-			}
+				// Return descriptor slots under the lock. Keep native objects in the stack batch
+				// until the lock is released; a full batch leaves the rest for the next pass.
+				while (b.graveyard_head < b.graveyard.size() &&
+				       b.graveyard[b.graveyard_head].frame < threshold)
+				{
+					const Dead& dead = b.graveyard[b.graveyard_head];
+					if (is_slot(dead.kind))
+					{
+						release_slot(b, dead);
+					}
+					else if (count < DRAIN_BATCH)
+					{
+						batch[count++] = dead;
+					}
+					else
+					{
+						break;
+					}
+					++b.graveyard_head;
+				}
 
-			// Compact when empty, or once the dead prefix is long; survivors span only the frames
-			// in flight, so this stays rare.
-			if (b.graveyard_head == b.graveyard.size())
-			{
-				b.graveyard.clear();
-				b.graveyard_head = 0;
-			}
-			else if (b.graveyard_head >= 256)
-			{
-				b.graveyard.erase(b.graveyard.begin(), b.graveyard.begin() + b.graveyard_head);
-				b.graveyard_head = 0;
-			}
+				// Drop the consumed prefix occasionally instead of shifting survivors after every
+				// drain. An empty graveyard can keep its allocation for the next frame.
+				if (b.graveyard_head == b.graveyard.size())
+				{
+					b.graveyard.clear();
+					b.graveyard_head = 0;
+				}
+				else if (b.graveyard_head >= 256)
+				{
+					b.graveyard.erase(b.graveyard.begin(), b.graveyard.begin() + b.graveyard_head);
+					b.graveyard_head = 0;
+				}
 
-			b.resources_lock.unlock();
+				b.resources_lock.unlock();
+
+				for (u32 i = 0; i < count; ++i)
+				{
+					release_native(b, batch[i]);
+				}
+			} while (count == DRAIN_BATCH);
 		}
 	}
 
@@ -370,19 +444,21 @@ namespace ember::gpu
 
 		vk::Slot& slot = b->slots[frame.index % b->ctx.in_flight];
 
-		// A loop that retires without waiting pays here instead.
+		// Reusing a slot is the last point where its previous frame can finish. Wait before
+		// resetting command pools, query slots, and mapped ring storage.
 		if (slot.frame != nullptr && !slot.complete.load(std::memory_order_acquire))
 		{
 			wait_slot(*b, slot);
 		}
 
-		// Under the lock a destroy stamps with, so a destroy lands wholly before or after.
+		// Destruction takes this lock when stamping a resource, so each retirement sees either
+		// the previous frame or this one.
 		b->resources_lock.lock();
 		b->latest_frame = frame.index;
 		b->resources_lock.unlock();
 
 		const u32 opened = slot.opened.load(std::memory_order_acquire);
-		const u32 count = opened < b->ctx.max_lists ? opened : b->ctx.max_lists;
+		const u32 count = min(opened, b->ctx.max_lists);
 
 		for (u32 i = 0; i < count; ++i)
 		{
@@ -392,6 +468,12 @@ namespace ember::gpu
 
 		EMBER_VK_CHECK(vkResetCommandPool(b->ctx.device, slot.finish.pool, 0));
 		reset_list(slot.finish);
+
+		EMBER_VK_CHECK(vkResetCommandPool(b->ctx.device, slot.upload_pool, 0));
+		slot.upload_batch = 0;
+		slot.upload_open = false;
+		vk::ring_reset(b->transient, slot_index(*b, slot));
+		vk::ring_reset(b->staging, slot_index(*b, slot));
 
 		if (b->timestamps != VK_NULL_HANDLE)
 		{
@@ -431,7 +513,7 @@ namespace ember::gpu
 		EMBER_ASSERT_MSG(slot.frame == &frame && !slot.closed, "end_frame of a frame not open");
 
 		const u32 opened = slot.opened.load(std::memory_order_acquire);
-		const u32 count = opened < b->ctx.max_lists ? opened : b->ctx.max_lists;
+		const u32 count = min(opened, b->ctx.max_lists);
 
 		for (u32 i = 0; i < count; ++i)
 		{
@@ -444,7 +526,8 @@ namespace ember::gpu
 			}
 		}
 
-		// The frame's own list: whatever it acquired is moved to Present.
+		// Use the slot's private list for the acquired images' final transitions. It also clears
+		// an image that the frame left unused.
 		CommandList& finish = slot.finish;
 		finish.frame_index = frame.index;
 		finish.open = true;
@@ -460,8 +543,8 @@ namespace ember::gpu
 		finish.ended = true;
 		finish.submitted = true;
 
-		// The last graphics submit: it waits on any acquire no earlier submit consumed, signals
-		// each acquired image's present semaphore and the timeline value the frame completes at.
+		// Finish graphics with any acquire waits still pending, each image's present signal, and
+		// a timeline signal covering this submission. Other queues keep their own frame values.
 		vk::QueueState& queue = vk::queue_for(*b, Queue::Graphics);
 		const u32 queue_index = b->ctx.queue_index[(u32)Queue::Graphics];
 
@@ -483,7 +566,19 @@ namespace ember::gpu
 		VkSemaphoreSubmitInfo signals[vk::MAX_SWAPCHAINS + 1];
 		u32 signal_count = vk::present_signals(*b, slot, signals);
 
-		const VkCommandBufferSubmitInfo commands{
+		b->last_transient_used = vk::ring_used(b->transient, slot_index(*b, slot));
+		b->last_staging_used = vk::ring_used(b->staging, slot_index(*b, slot));
+
+		VkCommandBufferSubmitInfo commands[2];
+		u32 command_count = 0;
+		if (const VkCommandBuffer uploads = vk::flush_uploads(slot); uploads != VK_NULL_HANDLE)
+		{
+			commands[command_count++] = {
+			    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+			    .commandBuffer = uploads,
+			};
+		}
+		commands[command_count++] = {
 		    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
 		    .commandBuffer = finish.commands,
 		};
@@ -501,8 +596,8 @@ namespace ember::gpu
 		    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
 		    .waitSemaphoreInfoCount = wait_count,
 		    .pWaitSemaphoreInfos = waits,
-		    .commandBufferInfoCount = 1,
-		    .pCommandBufferInfos = &commands,
+		    .commandBufferInfoCount = command_count,
+		    .pCommandBufferInfos = commands,
 		    .signalSemaphoreInfoCount = signal_count,
 		    .pSignalSemaphoreInfos = signals,
 		};
@@ -514,7 +609,11 @@ namespace ember::gpu
 		slot.closed = true;
 		frames::begin_stage(frame, Stage::Gpu);
 
+		// Measure the CPU call that queues presentation. Its semaphore waits happen on the GPU,
+		// so this stage records the handoff rather than display latency.
+		frames::begin_stage(frame, Stage::Present);
 		vk::present(*b, slot);
+		frames::end_stage(frame, Stage::Present);
 	}
 
 	void wait_frame(Frame& frame)
@@ -562,6 +661,18 @@ namespace ember::gpu
 		    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 		};
 		EMBER_VK_CHECK(vkBeginCommandBuffer(list.commands, &begin));
+
+		// Start both bind points with the shared heap and offsets into the zeroed constant block.
+		// Later set_constants() calls replace those offsets lazily.
+		const VkDescriptorSet sets[] = {b->heap.set, b->heap.constants};
+		const u32 zero_offsets[CONSTANT_SLOTS] = {};
+		const VkPipelineBindPoint bind_points[] = {VK_PIPELINE_BIND_POINT_GRAPHICS,
+		    VK_PIPELINE_BIND_POINT_COMPUTE};
+		for (const VkPipelineBindPoint bind_point : bind_points)
+		{
+			vkCmdBindDescriptorSets(list.commands, bind_point, b->heap.pipeline_layout, 0, 2, sets,
+			    CONSTANT_SLOTS, zero_offsets);
+		}
 
 		if (b->ctx.debug_utils && name != nullptr)
 		{
@@ -640,8 +751,8 @@ namespace ember::gpu
 			};
 		}
 
-		// The first graphics submit after an acquire waits for the display to hand the image
-		// over. Later submits on the queue run behind it, so one wait covers them all.
+		// Consume pending acquire semaphores on a graphics submission so its image accesses can
+		// wait for acquisition. Remove them here because each binary signal is consumed once.
 		if (def.queue == Queue::Graphics)
 		{
 			slot.lock.lock();
@@ -670,19 +781,35 @@ namespace ember::gpu
 		    .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 		};
 
+		// Put the pending upload batch first in this graphics submission. Its recorded barriers
+		// provide the dependencies for the resource accesses that follow.
+		VkCommandBuffer uploads = VK_NULL_HANDLE;
+		if (def.queue == Queue::Graphics)
+		{
+			uploads = vk::flush_uploads(slot);
+		}
+
 		const u32 total = (u32)def.lists.size();
 		u32 offset = 0;
 		do
 		{
 			const u32 remaining = total - offset;
-			const u32 count = remaining < LISTS_PER_SUBMIT ? remaining : LISTS_PER_SUBMIT;
+			const u32 count = min(remaining, LISTS_PER_SUBMIT);
 			const bool first = offset == 0;
 			const bool last = offset + count == total;
 
-			VkCommandBufferSubmitInfo commands[LISTS_PER_SUBMIT];
+			VkCommandBufferSubmitInfo commands[LISTS_PER_SUBMIT + 1];
+			u32 command_count = 0;
+			if (first && uploads != VK_NULL_HANDLE)
+			{
+				commands[command_count++] = {
+				    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+				    .commandBuffer = uploads,
+				};
+			}
 			for (u32 i = 0; i < count; ++i)
 			{
-				commands[i] = {
+				commands[command_count++] = {
 				    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
 				    .commandBuffer = def.lists[offset + i]->commands,
 				};
@@ -692,7 +819,7 @@ namespace ember::gpu
 			    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
 			    .waitSemaphoreInfoCount = first ? wait_count : 0,
 			    .pWaitSemaphoreInfos = waits,
-			    .commandBufferInfoCount = count,
+			    .commandBufferInfoCount = command_count,
 			    .pCommandBufferInfos = commands,
 			    .signalSemaphoreInfoCount = last ? 1u : 0u,
 			    .pSignalSemaphoreInfos = &signal,
@@ -757,7 +884,8 @@ namespace ember::gpu
 		vk::run_blocking(idle_job, &wait, "gpu idle");
 		vk::note_result(*b, wait.result);
 
-		// Idle proves every value handed out has signalled.
+		// A successful idle wait covers every submitted value. Refresh the cached counters before
+		// polling frame completion and draining the graveyard.
 		for (u32 i = 0; i < b->ctx.queue_count; ++i)
 		{
 			vk::QueueState& queue = b->ctx.queues[i];
@@ -799,8 +927,14 @@ namespace ember::gpu
 
 		b->resources_lock.lock();
 		stats.textures = b->textures.size();
+		stats.buffers = b->buffers.size();
+		stats.samplers = b->samplers.size();
+		stats.pipelines = b->graphics_pipelines.size() + b->compute_pipelines.size();
 		stats.pending_destroys = (u32)(b->graveyard.size() - b->graveyard_head);
 		b->resources_lock.unlock();
+
+		stats.transient_bytes = b->last_transient_used;
+		stats.staging_bytes = b->last_staging_used;
 
 		VmaTotalStatistics memory_stats = {};
 		vmaCalculateStatistics(b->ctx.allocator, &memory_stats);
@@ -809,7 +943,7 @@ namespace ember::gpu
 		for (u32 i = 0; i < b->ctx.in_flight; ++i)
 		{
 			const u32 opened = b->slots[i].opened.load(std::memory_order_relaxed);
-			stats.command_lists += opened < b->ctx.max_lists ? opened : b->ctx.max_lists;
+			stats.command_lists += min(opened, b->ctx.max_lists);
 		}
 
 		return stats;

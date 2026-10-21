@@ -1,7 +1,7 @@
 #pragma once
 
-// Shared by every backend source. Volk first, because it defines VK_NO_PROTOTYPES and loads every
-// entry point itself, so nothing links libvulkan and no call goes through the loader's trampoline.
+// Vulkan types and small translations shared by the backend. Include Volk first so it supplies
+// VK_NO_PROTOTYPES and the function pointers; the engine loads Vulkan instead of linking it.
 
 #include <volk.h>
 
@@ -12,12 +12,12 @@
 
 namespace ember::gpu::vk
 {
-	// Everything the backend leans on: dynamic rendering, synchronization2, timeline semaphores,
-	// descriptor indexing and host query reset, is core in Vulkan 1.3.
+	// Vulkan 1.3 puts dynamic rendering, synchronization2, timeline semaphores, descriptor
+	// indexing, and host query reset in the core API. Feature bits are still checked at boot.
 	inline constexpr u32 API_VERSION = VK_API_VERSION_1_3;
 
-	// The Vulkan format of each TextureFormat, in enum order. The aspect comes from the
-	// FormatInfo's depth flag, so this table has one column.
+	// Keep this table in TextureFormat order for direct lookup. Aspect selection comes from
+	// FormatInfo, so the table only needs the native format.
 	inline constexpr VkFormat VK_FORMATS[] = {
 	    VK_FORMAT_UNDEFINED,
 	    VK_FORMAT_R8_UNORM,
@@ -58,8 +58,8 @@ namespace ember::gpu::vk
 		return VK_FORMATS[(u32)format];
 	}
 
-	// The TextureFormat a Vulkan format spells, Undefined for one the table lacks. Walks the table
-	// for the swapchain's format once at creation.
+	// Swapchain creation uses the reverse lookup to match a native format. Unknown formats return
+	// Undefined; the forward lookup remains a direct index.
 	inline TextureFormat from_vk(VkFormat format)
 	{
 		for (u32 i = 1; i < (u32)TextureFormat::Count; ++i)
@@ -78,7 +78,35 @@ namespace ember::gpu::vk
 		return format_info(format).depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 	}
 
-	// A readable VkResult for logs. Not exhaustive; an unknown code prints as its number.
+	// Sampler comparison and pipeline depth tests share the same translation.
+	inline VkCompareOp to_vk(CompareOp op)
+	{
+		switch (op)
+		{
+			case CompareOp::Never:
+				return VK_COMPARE_OP_NEVER;
+			case CompareOp::Less:
+				return VK_COMPARE_OP_LESS;
+			case CompareOp::Equal:
+				return VK_COMPARE_OP_EQUAL;
+			case CompareOp::LessEqual:
+				return VK_COMPARE_OP_LESS_OR_EQUAL;
+			case CompareOp::Greater:
+				return VK_COMPARE_OP_GREATER;
+			case CompareOp::NotEqual:
+				return VK_COMPARE_OP_NOT_EQUAL;
+			case CompareOp::GreaterEqual:
+				return VK_COMPARE_OP_GREATER_OR_EQUAL;
+			case CompareOp::Always:
+			case CompareOp::Count:
+				break;
+		}
+
+		return VK_COMPARE_OP_ALWAYS;
+	}
+
+	// Give common results readable names in diagnostics. Unlisted results return VK_RESULT_?;
+	// callers that need the exact value must also log the numeric result.
 	inline const char* result_name(VkResult result)
 	{
 		switch (result)
@@ -135,9 +163,8 @@ namespace ember::gpu::vk
 	}
 }
 
-// For calls whose failure is a programmer error, not a runtime condition: logs the expression and
-// the result, then asserts. Calls that can fail at run time, creating an instance, a device or a
-// swapchain, submitting and presenting, test their result themselves.
+// Log and assert when a call expected to succeed fails. Runtime failures such as device creation,
+// submission, or presentation need their own result handling instead of this check.
 #define EMBER_VK_CHECK(expr)                                                                       \
 	do                                                                                             \
 	{                                                                                              \

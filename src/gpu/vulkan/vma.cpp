@@ -1,6 +1,6 @@
-// The one translation unit that instantiates VulkanMemoryAllocator. Volk first, so VMA sees
-// VK_NO_PROTOTYPES and fetches every entry point through the functions boot hands it. VMA's own
-// warnings are its business, not the engine's.
+// Compile VMA in one translation unit. Including Volk first disables Vulkan prototypes so VMA
+// resolves entry points through the functions supplied at boot. Limit third-party warning
+// suppression to this implementation include so engine code keeps its normal diagnostics.
 
 #include <gpu/vulkan/common.h>
 

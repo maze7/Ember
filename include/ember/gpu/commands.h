@@ -1,22 +1,22 @@
 #pragma once
 
-// Abstraction for recording GPU work. gpu::begin_command_list() opens a CommandList on a frame,
-// the functions here fill it, gpu::end_command_liset() closes it and gpu::submit() hands it to a
-// queue. A list is an opaque pointer rather than a handle because it lives inside one frame and
-// sits on the hot path: every command goes straight to the native command buffer with no table
-// lookup. The list owns its command pool, so the job recording it may resume on another worker
-// between comands. One job records a list at a time; several jobs record several lists at once.
+// Records work into a command list opened by gpu::begin_command_list(). End the
+// list before submitting it, and stop using its pointer when the frame slot is
+// reused. The pointer reaches recording state directly without a handle lookup.
+// Each list owns its command pool, so its single writer may migrate between
+// workers; different jobs can record different lists concurrently.
 //
-// State is explicit and small. Resources are bindless, so a draw names its textures and buffers
-// through indices in its constants, not through binds. What is bound is a pipeline, an index buffer
-// and the three constant slots, which set_constants() fills from the frame's transient memory.
+// Shaders find resources through bindless indices. Recording state consists of
+// pipelines, an index buffer, and constant slots backed by frame-local storage.
+// Redundant binds are skipped, and changed constant offsets bind at the next use.
 //
-// Barriers are the caller's responsibility. A resource moves between states where the recording
-// says so, and nothing is tracked per draw. A render pass sets the viewport and scissor to its
-// attachments, flipped so that clip space is Y up on every backend.
+// Callers provide resource barriers and cross-queue dependencies. No per-draw
+// state tracker inserts them. Passes set an attachment-sized viewport and scissor;
+// the Vulkan viewport is flipped to keep clip-space Y pointing up.
 //
-// Every command is a few stores and one Vulkan call. A command on a list that is not recording,
-// ended or never opened, asserts in a debug build and does nothing in a release one.
+// Commands require an open list. A non-recording list asserts in debug builds
+// and is ignored otherwise; other pass, binding, and resource preconditions
+// remain the caller's responsibility.
 
 #include <ember/gpu/types.h>
 
@@ -26,23 +26,23 @@ namespace ember::gpu
 {
 	struct CommandList;
 
-	// Where a textures memory sits for the next stretch of GPU work. One state names the stage,
-	// access and layout the backend translates it to.
+	// Describes the access that a texture transition synchronizes. The backend
+	// translates each state to pipeline stages, access masks, and an image layout.
 	enum class TextureState : u8
 	{
-		// Contents are garbage. Legal only as [before]: a fresh texture, or a backbuffer just
-		// acquired.
+		// Discards previous contents. Use only as the source of a transition, such as
+		// the first use of a new texture or an acquired backbuffer.
 		Undefined,
 		ColorTarget,
 		DepthTarget,
 		ShaderRead,
 
-		// Storage access from any shader stage
+		// Shader storage access, including writes.
 		ShaderWrite,
 		CopySrc,
 		CopyDst,
 
-		// Legal only as [after]: the presentation engine takes over from here.
+		// Final state before presentation. Use as the destination of a transition.
 		Present,
 		Count
 	};
@@ -53,16 +53,16 @@ namespace ember::gpu
 		TextureState before = TextureState::Undefined;
 		TextureState after = TextureState::Undefined;
 
-		// The whole texture by default. Narrow when levels move independently, as a mip pyramid
-		// downsample does.
+		// Covers all remaining mips and layers by default. Narrow the range when
+		// subresources change state independently, as during mip generation.
 		u32 base_mip = 0;
 		u32 mip_count = ALL_MIPS;
 		u32 base_layer = 0;
 		u32 layer_count = ALL_LAYERS;
 	};
 
-	// Where a buffer's bytes sit for the next stretch of GPU work. Buffers have no layout, so a
-	// state is only the stage and access to synchronize against.
+	// Describes buffer access for a dependency. Buffers have no image layout;
+	// their states select the pipeline stages and access masks to synchronize.
 	enum class BufferState : u8
 	{
 		ShaderRead,
@@ -114,7 +114,8 @@ namespace ember::gpu
 		ClearColor clear = {};
 	};
 
-	// A null texture is no depth attachment. Reverse Z: depth clears to zero, the far plane.
+	// A null handle omits depth. The default clear is zero for reverse Z,
+	// where the far plane has the smallest depth value.
 	struct DepthAttachment
 	{
 		TextureHandle texture = {};
@@ -125,16 +126,16 @@ namespace ember::gpu
 		f32 clear_depth = 0.0f;
 	};
 
-	// One render pass: its attachments, which also give it its size. Every attachment is the same
-	// size and already in its target state when the pass begins.
+	// Attachments define the render area. Callers supply equally sized subresources
+	// and transition them to their target states before beginning the pass.
 	struct RenderPassDef
 	{
 		Span<const ColorAttachment> colors = {};
 		DepthAttachment depth = {};
 	};
 
-	// Bit identical to VkDrawIndirectCommand and D3D12_DRAW_ARGUMENTS, so one buffer layout serves
-	// every backend and may be baked into cooked data.
+	// Native-compatible non-indexed draw arguments. Keep the layout stable so
+	// shaders and cooked data can produce commands without repacking them.
 	struct DrawIndirectArgs
 	{
 		u32 vertex_count = 0;
@@ -143,7 +144,7 @@ namespace ember::gpu
 		u32 first_instance = 0;
 	};
 
-	// Bit identical to VkDrawIndexedIndirectCommand and D3D12_DRAW_INDEXED_ARGUMENTS.
+	// Native-compatible indexed draw arguments, including a signed base-vertex offset.
 	struct DrawIndexedIndirectArgs
 	{
 		u32 index_count = 0;
@@ -153,7 +154,7 @@ namespace ember::gpu
 		u32 first_instance = 0;
 	};
 
-	// Bit identical to VkDispatchIndirectCommand and D3D12_DISPATCH_ARGUMENTS.
+	// Native-compatible dispatch arguments expressed as workgroup counts.
 	struct DispatchIndirectArgs
 	{
 		u32 x = 1;
@@ -164,8 +165,9 @@ namespace ember::gpu
 	static_assert(sizeof(DrawIndirectArgs) == 16 && sizeof(DrawIndexedIndirectArgs) == 20 &&
 	              sizeof(DispatchIndirectArgs) == 12);
 
-	// Moves resources between states, ordering everything before on the list's queue against
-	// everything after.
+	// Records dependencies for the named resource accesses on this list's queue.
+	// Texture barriers also change image layouts. Record outside render passes;
+	// use submission waits to synchronize work on a different queue.
 	void barrier(CommandList* list, Span<const TextureBarrier> textures,
 	    Span<const BufferBarrier> buffers = {});
 
@@ -179,21 +181,27 @@ namespace ember::gpu
 		barrier(list, {}, Span<const BufferBarrier>(&buffer, 1));
 	}
 
-	// Everything before, visible to everything after. The sledgehammer, for cornering a hazard.
+	// Records a broad dependency from earlier writes to later reads and writes
+	// on this queue. Useful when diagnosing hazards, but it neither transitions
+	// image layouts nor replaces dependencies between queues.
 	void memory_barrier(CommandList* list);
 
-	// Draws record between these. Compute and copies record outside them.
+	// Begin and end the attachment scope for draws. Dispatches, copies, fills,
+	// and these explicit barriers belong outside that scope.
 	void begin_render_pass(CommandList* list, const RenderPassDef& def);
 	void end_render_pass(CommandList* list);
 
-	// Narrower than the pass. In the flipped space: origin top left, Y down, in pixels, as D3D.
+	// Overrides the viewport or scissor within a pass. Coordinates are framebuffer
+	// pixels from the top left, with Y increasing downward. The backend handles
+	// the viewport flip; callers supply a positive viewport height.
 	void set_viewport(CommandList* list, const Viewport& viewport);
 	void set_scissor(CommandList* list, const Rect& scissor);
 
 	void bind_pipeline(CommandList* list, GraphicsPipelineHandle pipeline);
 	void bind_pipeline(CommandList* list, ComputePipelineHandle pipeline);
 
-	// Up to PUSH_CONSTANT_BYTES, seen by every stage of the bound pipeline.
+	// Copies a nonzero multiple of four bytes, up to PUSH_CONSTANT_BYTES, for all
+	// shader stages. Every pipeline shares the layout, so a bind need not precede it.
 	void push_constants(CommandList* list, const void* data, u32 size);
 
 	template <typename T>
@@ -204,10 +212,11 @@ namespace ember::gpu
 		push_constants(list, &data, sizeof(T));
 	}
 
-	// Fills constant slot [slot] for the draws and dispatches that follow: copies [data] into the
-	// frame's transient memory and rebinds the slot's offset at the next draw or dispatch. A slot
-	// keeps its contents until set again. Use the slots by frequency: CONSTANTS_FRAME,
-	// CONSTANTS_PASS, CONSTANTS_DRAW.
+	// Copies data into the frame's transient storage and selects it for slot.
+	// Each block is nonempty and at most MAX_CONSTANT_BLOCK_BYTES. The next draw
+	// or dispatch binds the changed offsets; a slot keeps them until set again.
+	// Allocation failure logs and leaves the previous slot unchanged. Group updates
+	// through CONSTANTS_FRAME, CONSTANTS_PASS, and CONSTANTS_DRAW by frequency.
 	void set_constants(CommandList* list, u32 slot, const void* data, u32 size);
 
 	template <typename T>
@@ -228,16 +237,16 @@ namespace ember::gpu
 	void draw_indexed(CommandList* list, u32 index_count, u32 instance_count = 1,
 	    u32 first_index = 0, i32 base_vertex = 0, u32 first_instance = 0);
 
-	// Args are packed at [stride], tightly by default; a wider stride carries per draw payload
-	// beside them.
+	// Reads arguments at stride-byte intervals. The stride is a multiple of four
+	// and at least the argument structure's size; extra bytes can hold draw metadata.
 	void draw_indirect(CommandList* list, BufferHandle args, u64 offset, u32 draw_count,
 	    u32 stride = sizeof(DrawIndirectArgs));
 
 	void draw_indexed_indirect(CommandList* list, BufferHandle args, u64 offset, u32 draw_count,
 	    u32 stride = sizeof(DrawIndexedIndirectArgs));
 
-	// The GPU decides the count, read from [count] at [count_offset] and capped at
-	// [max_draw_count]. Needs Caps::indirect_count.
+	// Takes the draw count from the GPU buffer at count_offset, capped by
+	// max_draw_count. Requires Caps::indirect_count and the matching argument layout.
 	void draw_indirect_count(CommandList* list, BufferHandle args, u64 offset, BufferHandle count,
 	    u64 count_offset, u32 max_draw_count, u32 stride = sizeof(DrawIndirectArgs));
 
@@ -251,24 +260,28 @@ namespace ember::gpu
 	void copy_buffer(CommandList* list, BufferHandle src, u64 src_offset, BufferHandle dst,
 	    u64 dst_offset, u64 size);
 
-	// One subresource, tightly packed in the buffer at its offset, block rows for BC formats. The
-	// texture is in CopyDst, or in CopySrc for the other direction.
+	// Copies one whole mip and layer using tightly packed buffer data, including
+	// block rows for BC formats. Transition the texture to CopyDst for uploads
+	// or CopySrc for readback, and synchronize the buffer's copy access too.
 	void copy_buffer_to_texture(CommandList* list, BufferHandle src, u64 src_offset,
 	    TextureHandle dst, u32 mip, u32 layer);
 
 	void copy_texture_to_buffer(CommandList* list, TextureHandle src, u32 mip, u32 layer,
 	    BufferHandle dst, u64 dst_offset);
 
-	// Offset and size are multiples of four: fill writes whole words.
+	// Fills whole u32 words, so offset and size must be multiples of four.
+	// Record outside a render pass with the required copy dependencies in place.
 	void fill_buffer(CommandList* list, BufferHandle dst, u64 offset, u64 size, u32 value);
 
-	// Opens a debug label, for RenderDoc and Nsight, and a GPU timestamp pair the profiler reads
-	// through gpu::zones() once the frame completes. Zones nest, and every begin has its end before
-	// the list ends. [name] must outlive the frame, which a string literal does.
+	// Opens a capture label and, when available, a timestamped zone. Pair every
+	// begin with an end before ending the list. Keep name alive until its timing
+	// data has been consumed; string literals naturally meet that requirement.
+	// Zones can still label work when timestamp slots are unavailable.
 	void begin_zone(CommandList* list, const char* name, u32 color = 0);
 	void end_zone(CommandList* list);
 
-	// A zone that closes with its scope. Made through EMBER_GPU_ZONE, not by hand.
+	// Pairs zone calls across scope exits. Use EMBER_GPU_ZONE and keep the scope
+	// inside the command list's recording lifetime.
 	class ZoneScope final
 	{
 	public:

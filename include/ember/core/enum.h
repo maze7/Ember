@@ -5,7 +5,6 @@
 // ember_enum_names taking that tag, and the helpers below find it from wherever the macro was
 // placed.
 
-#include <array> // IWYU pragma: keep
 #include <cstddef>
 #include <type_traits> // IWYU pragma: keep
 
@@ -17,11 +16,51 @@ namespace ember
 	{
 	};
 
+	// The names of an enum's values, in declaration order: a fixed array that knows its size and
+	// can be walked, and nothing more, so that a header naming an enum stays cheap.
+	template <size_t N>
+	struct EnumNames
+	{
+		const char* names[N];
+
+		constexpr size_t size() const
+		{
+			return N;
+		}
+
+		constexpr const char* operator[](size_t index) const
+		{
+			return names[index];
+		}
+
+		constexpr const char* const* begin() const
+		{
+			return names;
+		}
+
+		constexpr const char* const* end() const
+		{
+			return names + N;
+		}
+	};
+
+	// Copies a braced list of names into an EnumNames, deducing the count from the array.
+	template <size_t N>
+	constexpr EnumNames<N> to_names(const char* const (&raw)[N])
+	{
+		EnumNames<N> names = {};
+		for (size_t i = 0; i < N; ++i)
+		{
+			names.names[i] = raw[i];
+		}
+		return names;
+	}
+
 	/// Satisfied when EMBER_ENUM_NAMES(T, ...) is in scope for T.
 	template <typename T>
 	concept NamedEnum = requires { ember_enum_names(EnumTag<T>{}); };
 
-	// Returns the array of names registered for T, in declaration order.
+	// Returns the names registered for T, in declaration order.
 	template <typename T>
 	constexpr auto enum_names()
 	{
@@ -56,9 +95,9 @@ namespace ember
 	constexpr auto ember_enum_names(::ember::EnumTag<Type>)                                        \
 	{                                                                                              \
 		constexpr const char* raw[] = {__VA_ARGS__};                                               \
-		constexpr auto arr = std::to_array(raw);                                                   \
-		::ember::check_enum_count<Type, arr.size()>();                                             \
-		return arr;                                                                                \
+		constexpr auto names = ::ember::to_names(raw);                                             \
+		::ember::check_enum_count<Type, names.size()>();                                           \
+		return names;                                                                              \
 	}
 }
 

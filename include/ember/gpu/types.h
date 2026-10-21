@@ -1,14 +1,13 @@
 #pragma once
 
-// The GPU module's types: handles, formats, the binding contract shaders are written against, and
-// the Defs that describe buffers, textures, samplers, and pipelines. Nothing here requires a
-// device, so code that only describes GPU state, material types and the cook tool, includes this
-// and never links the backend.
+// Resource handles, formats, shader bindings, and descriptions of GPU state.
+// These types let materials and tools describe resources without a live device.
 //
-// Every GPU object is named by a Handle into a pool the device owns, and a handle's index is also
-// the resource's slot in the bindless descriptor heap: the u32 a shader indexes a texture or buffer
-// with is handle.index(). Slot 0 of every array is a device-owned fallback, so the null handle, and
-// a slot whose object has been released, read white or zero instead of crashing.
+// Buffer, texture, and sampler handles select pool slots whose indices also
+// address the bindless descriptors. Shaders receive the index without its
+// generation, so callers must keep those resources alive while the GPU uses them.
+// Descriptor arrays start with fallback resources and are reset during retirement;
+// this does not make stale indices safe after a slot is reused.
 
 #include <ember/containers/span.h>
 #include <ember/core/enum.h>
@@ -18,8 +17,8 @@
 
 namespace ember
 {
-	// The tag types stay incomplete intentionally: user code copies, compares and stores handles,
-	// and only the backend resolves one.
+	// Incomplete tags distinguish handle types without exposing backend objects.
+	// Callers can store and compare handles; only the owning pool resolves them.
 	struct Buffer;
 	struct Texture;
 	struct Sampler;
@@ -37,8 +36,8 @@ namespace ember
 
 namespace ember::gpu
 {
-	// The binding contract, shared with shaders/ember.slang. These are not tuning knobs: changing
-	// one changes every shader and every backend.
+	// Shared limits and binding numbers used by shaders/ember.slang and the backends.
+	// Changing these requires updating both sides of the shader interface together.
 	inline constexpr u32 MAX_COLOR_ATTACHMENTS = 8;
 	inline constexpr u32 MAX_MIP_LEVELS = 16;
 	inline constexpr u32 MAX_BINDLESS_SAMPLERS = 2048;
@@ -47,15 +46,15 @@ namespace ember::gpu
 	inline constexpr u32 ALL_MIPS = ~0u;
 	inline constexpr u32 ALL_LAYERS = ~0u;
 
-	// Set 1 is three dynamic constant blocks, by how often they change. set_constants() fills one
-	// from the frame's transient memory.
+	// Set 1 holds dynamic constant blocks grouped by update frequency.
+	// set_constants() copies a block into the current frame's transient storage.
 	inline constexpr u32 CONSTANT_SLOTS = 3;
 	inline constexpr u32 CONSTANTS_FRAME = 0;
 	inline constexpr u32 CONSTANTS_PASS = 1;
 	inline constexpr u32 CONSTANTS_DRAW = 2;
 
-	// Set 0 is the bindless heap: one array per binding, indexed by handle. Cube storage views are
-	// 2D arrays (D3D12's rule for cube UAVs), so there are four sampled arrays and three storage.
+	// Set 0 holds the bindless arrays, indexed by resource slot. Cube storage views
+	// use the 2D-array binding, leaving four sampled arrays and three storage arrays.
 	inline constexpr u32 BINDING_SAMPLED_2D = 0;
 	inline constexpr u32 BINDING_SAMPLED_2D_ARRAY = 1;
 	inline constexpr u32 BINDING_SAMPLED_CUBE = 2;
@@ -68,16 +67,16 @@ namespace ember::gpu
 	inline constexpr u32 SAMPLED_ARRAY_COUNT = 4;
 	inline constexpr u32 STORAGE_ARRAY_COUNT = 3;
 
-	// The index a shader reads a resource's descriptor at. Mip 0 of a storage texture; deeper mips
-	// come  from gpu::storage_index().
+	// Returns the descriptor slot without checking the handle's generation or usage.
+	// Storage mips beyond zero have separate slots returned by gpu::storage_index().
 	template <typename Tag>
 	u32 bindless_index(Handle<Tag> handle)
 	{
 		return handle.index();
 	}
 
-	// The queues work can be submitted to. When no dedicated family is present for compute or
-	// transfer, that queue's submissions run on the graphics queue in order and Caps says so.
+	// Logical submission queues. Compute and transfer use the graphics queue when
+	// the adapter has no dedicated family; Caps reports which queues are independent.
 	enum class Queue : u8
 	{
 		Graphics,
@@ -86,16 +85,16 @@ namespace ember::gpu
 		Count
 	};
 
-	// A point on one queue's timeline. The value a submission signals when the GPU has finished it.
-	// Zero covered nothing and is always complete. Any thread may ask after it or wait on it.
+	// A timeline point signaled after the submission's GPU work. A zero value names
+	// no work and is already complete. It does not retain the submitted resources.
 	struct Submission
 	{
 		u64 value = 0;
 		Queue queue = Queue::Graphics;
 	};
 
-	// Order is ABI: values are serialized in cooked textures and pipeline caches. Append only; the
-	// backend's format table static_asserts the count.
+	// Keep existing values stable for cooked textures and cached pipeline data.
+	// Append formats rather than renumbering them; the backend tables follow this order.
 	enum class TextureFormat : u8
 	{
 		Undefined = 0,
@@ -128,8 +127,8 @@ namespace ember::gpu
 		Count
 	};
 
-	// How a format packs: the bytes of one block and the texels a block covers, 1 by 1 for every
-	// format that is not block compressed. Upload sizes and cooked mip chains are computed from it.
+	// Describes the bytes and texel dimensions of one format block. Uncompressed
+	// formats use 1x1 blocks, so upload and mip-size calculations share the same rules.
 	struct FormatInfo
 	{
 		u8 block_bytes = 0;
@@ -141,13 +140,15 @@ namespace ember::gpu
 
 	FormatInfo format_info(TextureFormat format);
 
-	// The size of [mip] of a texture whose mip 0 is [extent], each side halved and never below one.
+	// Returns the extent at mip, halving each dimension without going below one.
+	// The caller supplies a valid mip index.
 	Extent3D mip_extent(Extent3D extent, u32 mip);
 
-	// Mips down to one texel on the largest side.
+	// Counts the mip chain through the level where the largest dimension reaches one.
 	u32 full_mip_count(Extent3D extent);
 
-	// Bytes of one tightly packed subresource of a format, block rows included for BC formats.
+	// Bytes for one tightly packed mip and layer, including depth for 3D textures.
+	// Compressed dimensions round up to whole texel blocks.
 	u64 subresource_bytes(TextureFormat format, Extent3D extent, u32 mip);
 
 	enum class TextureUsage : u8
@@ -172,13 +173,14 @@ namespace ember::gpu
 		Count
 	};
 
-	// Which storage array a texture's write descriptors live in, by type.
+	// Selects the zero-based storage array for a texture type. Cubes share the
+	// 2D-array storage binding.
 	u32 storage_array(TextureType type);
 
-	// A texture is made empty; gpu::upload() or a render pass fills it. [name] is borrowed for the
-	// call and shows in validation messages and captures. Depth is one unless Texture3D, the array
-	// size is [layers], six for a cube. A sample count above one is for attachments only: no mips,
-	// no uploads, Texture2D.
+	// Describes storage without initial pixels; upload or a render pass fills it.
+	// name is borrowed during creation for diagnostics. Only 3D textures use depth
+	// above one; array layers are explicit, with six layers for a cube.
+	// Multisampled textures are 2D attachments with one mip, filled by rendering.
 	struct TextureDef
 	{
 		const char* name = "texture";
@@ -196,8 +198,8 @@ namespace ember::gpu
 		None = 0,
 		Index = 1 << 0,
 
-		// Readable through the bindless storage buffer arrray, which is also how vertex data is
-		// pulled: there is no vertex input state.
+		// Makes the buffer visible through the bindless storage array. Vertex shaders
+		// pull their data this way, so pipelines need no vertex-input layout.
 		Storage = 1 << 1,
 		Indirect = 1 << 2,
 		CopySrc = 1 << 3,
@@ -206,7 +208,8 @@ namespace ember::gpu
 
 	EMBER_ENUM_BITWISE_OPS(BufferUsage);
 
-	// Index width, bound with the buffer because every target API takes it at bind time.
+	// The index element width travels with the binding, allowing the same buffer
+	// description to be used with either supported index format.
 	enum class IndexFormat : u8
 	{
 		U16,
@@ -214,18 +217,19 @@ namespace ember::gpu
 		Count
 	};
 
-	// Where a buffer's memory lives and how the CPU touches it.
+	// Chooses the allocation's memory properties and how callers access it from the CPU.
 	enum class MemoryLocation : u8
 	{
-		// VRAM. The CPU reaches it only through gpu::upload() and copies.
+		// Device-local storage with no exposed CPU mapping. Fill it through uploads or copies.
 		DeviceLocal,
 
-		// Host visible, persistently mapped and write combined: the CPU writes through
-		// gpu::mapped() and never reads. Hazards against frames in flight are the caller's problem.
+		// Persistently mapped, coherent storage for CPU writes. Prefer sequential writes
+		// and prevent overwriting bytes the GPU is still using. Placement and caching
+		// depend on the adapter.
 		Upload,
 
-		// Host visible and cached: the GPU copies in, the CPU reads through gpu::mapped() once the
-		// submission that copied has completed.
+		// Mapped storage for CPU reads after a GPU copy. Wait for the copying submission
+		// before reading it; the allocator prefers cached host memory.
 		Readback,
 		Count
 	};
@@ -254,8 +258,8 @@ namespace ember::gpu
 		Count
 	};
 
-	// The three colors core Vulkan guarantees. Arbitrary colors are an extension on vulkan and free
-	// on D3D12. More can be added when something needs them.
+	// Fixed border colors keep sampler descriptions portable across the backends.
+	// Custom colors would need an additional API choice and backend support.
 	enum class BorderColor : u8
 	{
 		TransparentBlack,
@@ -264,7 +268,7 @@ namespace ember::gpu
 		Count
 	};
 
-	// Shared by samplers and depth state
+	// Comparison functions shared by depth tests and comparison samplers.
 	enum class CompareOp : u8
 	{
 		Never,
@@ -278,8 +282,8 @@ namespace ember::gpu
 		Count
 	};
 
-	// Min and Max need Caps::sampler_minmax, for Hi-Z pyramids. Creation falls back to
-	// WeightedAverage with a log when it's not defined.
+	// Min and Max support reductions such as Hi-Z construction and require
+	// Caps::sampler_minmax. Unsupported requests log and use WeightedAverage.
 	enum class ReductionMode : u8
 	{
 		WeightedAverage,
@@ -288,11 +292,12 @@ namespace ember::gpu
 		Count
 	};
 
-	// No upper LOD clamp, spelled the way Vulkan spells it.
+	// Default upper LOD limit, matching Vulkan's no-clamp sentinel.
 	inline constexpr f32 LOD_NONE = 1000.0f;
 
-	// Anisotropy of zero or one is off; higher is clamped to Caps::max_anisotropy. A compare
-	// sampler is for shadow maps and excludes a reduction mode, which the spec forbids together.
+	// Zero or one disables anisotropy; higher requests are limited by the adapter.
+	// Comparison samplers require WeightedAverage reduction, so depth comparison
+	// and min/max reduction cannot be combined in one sampler.
 	struct SamplerDef
 	{
 		const char* name = "sampler";
@@ -329,8 +334,8 @@ namespace ember::gpu
 		Count
 	};
 
-	// Which winding is the front, in the flipped viewport space a render pass establishes: D3D
-	// style, Y up in clip space.
+	// Front-facing winding after the viewport transform. Keep mesh winding and
+	// viewport orientation consistent with the culling choice.
 	enum class FrontFace : u8
 	{
 		CounterClockwise,
@@ -342,7 +347,7 @@ namespace ember::gpu
 	{
 		Solid,
 
-		// Needs Caps::wireframe; creation fails without it.
+		// Requires Caps::wireframe; pipeline creation fails when it is unavailable.
 		Wireframe,
 		Count
 	};
@@ -351,29 +356,29 @@ namespace ember::gpu
 	{
 		Opaque,
 
-		// Straight alpha: src.a lerps src over dst.
+		// Composites straight-alpha source colors over the destination.
 		AlphaBlend,
 
-		// src.a scales an add; dst alpha is kept.
+		// Adds alpha-weighted source color while preserving destination alpha.
 		Additive,
 
-		// src already scaled by its alpha; the compositor preset.
+		// Composites source colors that have already been multiplied by their alpha.
 		PremultipliedAlpha,
 		Count
 	};
 
-	// One stage of a pipeline: SPIR-V, which is a stream of u32 words so [code] starts 4-byte
-	// aligned and has a multiple of four bytes, and the entry point it runs. One blob may serve
-	// several stages when it carries several entry points.
+	// SPIR-V and its entry point for one shader stage. code starts on a four-byte
+	// boundary and contains whole u32 words. Both views are borrowed during creation;
+	// one module can serve several stages when it contains their entry points.
 	struct ShaderStageDef
 	{
 		Span<const u8> code = {};
 		const char* entry = "main";
 	};
 
-	// Depth added to every fragment as it is rasterized: [constant] in the format's smallest step
-	// and [slope] times the primitive's depth change per pixel, capped at [clamp] when nonzero. A
-	// shadow map pushes casters away from the light with it. Under reverse Z, away is negative.
+	// Constant and slope factors bias rasterized depth, with an optional clamp.
+	// The constant factor is format-dependent rather than a world-space distance.
+	// With reverse Z, a negative bias moves a shadow caster farther from the light.
 	struct DepthBias
 	{
 		f32 constant = 0.0f;
@@ -381,10 +386,10 @@ namespace ember::gpu
 		f32 clamp = 0.0f;
 	};
 
-	// Everything about a graphics pipeline. There is no vertex input state: vertex data is pulled
-	// from storage buffers in the shader, so layouts belong to shader code and pipelines never
-	// permute over them. Attachment formats are baked in. Depth is reverse Z: it clears to zero and
-	// greater is closer.
+	// Graphics state baked into a pipeline, including its attachment formats.
+	// Vertex layouts stay in shader code because vertices are pulled from storage
+	// buffers. The depth defaults use reverse Z: clear to zero and treat larger
+	// values as closer. Match the pass's clear value to the chosen comparison.
 	struct GraphicsPipelineDef
 	{
 		const char* name = "pipeline";
@@ -400,8 +405,8 @@ namespace ember::gpu
 		CompareOp depth_compare = CompareOp::GreaterEqual;
 		DepthBias depth_bias = {};
 
-		// Clamps depth to the viewport range instead of clipping at the near and far planes, so a
-		// shadow map keeps casters between the light and its near plane.
+		// Clamps depth instead of clipping at the near and far depth planes.
+		// Shadow passes can use this to retain casters beyond the light's near plane.
 		bool depth_clamp = false;
 
 		CullMode cull = CullMode::None;
@@ -417,8 +422,9 @@ namespace ember::gpu
 		ShaderStageDef shader = {};
 	};
 
-	// Whether a Def describes something the device can make. Creation checks these and refuses with
-	// a log; a tool checks them to report before cooking.
+	// Checks descriptions without creating device objects. Creation repeats these
+	// checks and logs a rejected description, but adapter limits and native creation
+	// can still fail. Tools can use this to reject malformed data before cooking.
 	bool is_valid(const TextureDef& def);
 	bool is_valid(const BufferDef& def);
 	bool is_valid(const SamplerDef& def);
@@ -429,8 +435,7 @@ namespace ember::gpu
 
 namespace ember
 {
-	// How data files spell these: [Filter] and [Wrap] on material parameters, cull and blend on
-	// material attributes.
+	// Stable names used in material data for filters, addressing, culling, and blending.
 	EMBER_ENUM_NAMES(gpu::Filter, "point", "linear");
 	EMBER_ENUM_NAMES(gpu::AddressMode, "repeat", "mirror", "clamp", "border");
 	EMBER_ENUM_NAMES(gpu::CullMode, "none", "back", "front");

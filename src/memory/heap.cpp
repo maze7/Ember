@@ -1,6 +1,8 @@
+#include <ember/memory/heap.h>
+
 #include <ember/core/enum.h>
 #include <ember/core/spin_mutex.h>
-#include <ember/memory/heap.h>
+#include <ember/math/scalar.h>
 #include <ember/memory/memory.h>
 
 #include "internal.h"
@@ -97,8 +99,7 @@ namespace ember::memory
 			while (cursor < end)
 			{
 				const size_t remaining = (size_t)(end - cursor);
-				const size_t chunk =
-				    remaining < tlsf_block_size_max() ? remaining : tlsf_block_size_max();
+				const size_t chunk = min(remaining, tlsf_block_size_max());
 				if (chunk < smallest_pool)
 				{
 					break;

@@ -24,7 +24,9 @@ namespace ember
 		class Arena;
 	}
 
-	// Logical stages a frame passes through on its way to the screen, in order.
+	// Logical stages a frame passes through on its way to the screen, in order. Gpu ends when the
+	// device has finished the frame's work; Present ends when the frame's images are handed to the
+	// display, which can come first, since the display waits on the GPU itself.
 	enum class Stage : u8
 	{
 		Update,

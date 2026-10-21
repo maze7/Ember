@@ -1,13 +1,16 @@
-// Swapchains: a surface for a window, the images the display lends a frame, and the presents at
-// the end of each frame. Backbuffers are texture pool entries the swapchain owns, so a render pass
-// draws into one like any other target. A swapchain follows the window: an acquire that finds the
-// window resized, or the driver saying so, builds a new chain and retires the old through the
-// graveyard, where the frames that could still touch it keep it alive.
+// Owns the surface, swapchain generations, and the texture handles wrapping their images.
+// Render passes use these handles like other color targets, while the swapchain keeps ownership
+// of the images. acquire() caches one image per frame and asks for a new generation when the
+// window size or surface status changes.
+//
+// end_frame() supplies any remaining present transition and queues presentation behind each
+// image's semaphore. Replaced views, semaphores, and chains use the frame-stamped graveyard.
 
 #include <ember/gpu/gpu.h>
 
 #include <ember/core/jobs.h>
 #include <ember/core/profile.h>
+#include <ember/math/scalar.h>
 #include <gpu/vulkan/backend.h>
 
 #if defined(EMBER_HAS_PLATFORM)
@@ -19,8 +22,8 @@ namespace ember::gpu
 {
 	namespace
 	{
-		// Eight bit sRGB, BGRA first since it is the native order of every desktop compositor,
-		// then the UNORM fallbacks. HDR is a later extension.
+		// Prefer eight-bit sRGB, with BGRA first, then try the UNORM equivalents. HDR will need a
+		// separate choice of format and color space.
 		VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice adapter, VkSurfaceKHR surface)
 		{
 			constexpr u32 MAX_FORMATS = 64;
@@ -56,7 +59,7 @@ namespace ember::gpu
 			                       VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
 		}
 
-		// The requested mode when the surface offers it, otherwise FIFO, the one every surface has.
+		// Keep the requested mode when the surface offers it. FIFO is the required fallback.
 		VkPresentModeKHR choose_present_mode(VkPhysicalDevice adapter, VkSurfaceKHR surface,
 		    PresentMode requested)
 		{
@@ -89,7 +92,8 @@ namespace ember::gpu
 			return VK_PRESENT_MODE_FIFO_KHR;
 		}
 
-		// A Wayland compositor may offer only premultiplied, so opaque is a preference, not a rule.
+		// Prefer opaque composition, but honor the modes the surface supports. Compositors can
+		// require an alpha mode even when the game draws an opaque window.
 		VkCompositeAlphaFlagBitsKHR choose_composite_alpha(const VkSurfaceCapabilitiesKHR& caps)
 		{
 			constexpr VkCompositeAlphaFlagBitsKHR PREFERRED[] = {
@@ -110,13 +114,8 @@ namespace ember::gpu
 			return VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 		}
 
-		u32 clamp(u32 value, u32 low, u32 high)
-		{
-			return value < low ? low : (value > high ? high : value);
-		}
-
-		// The window's size in pixels. The surface says when it can; when it cannot, which is
-		// Wayland, the window does, and only main's fiber may ask it. Zero is minimized.
+		// Use the surface's pixel extent when it supplies one. Otherwise main's fiber can query the
+		// window, as Wayland requires; other callers use the cached extent within surface limits.
 		VkExtent2D resolve_extent(const vk::SwapchainData& data,
 		    const VkSurfaceCapabilitiesKHR& caps)
 		{
@@ -139,8 +138,8 @@ namespace ember::gpu
 			};
 		}
 
-		// Retires the chain's images: the pool handles die now, the views and present semaphores
-		// go when the frames that could touch them have completed.
+		// Invalidate backbuffer handles now and put their views and present semaphores in the
+		// frame-stamped graveyard. The swapchain continues to own the native images.
 		void retire_images(vk::Backend& b, vk::SwapchainData& data)
 		{
 			for (u32 i = 0; i < data.image_count; ++i)
@@ -162,13 +161,14 @@ namespace ember::gpu
 		{
 			Ok,
 
-			// Zero extent: minimized. Nothing was built and any existing chain is kept.
+			// A zero extent leaves the existing chain in place until the window has pixels again.
 			Suspended,
 			Failed,
 		};
 
-		// Makes the chain and its backbuffers, handing the driver the old chain to recycle. The
-		// old generation retires through the graveyard.
+		// Build a generation for the current surface size. Passing oldSwapchain lets the driver
+		// reuse its resources; our old views, semaphores, and chain still retire through the
+		// graveyard.
 		Build build(vk::Backend& b, vk::SwapchainData& data, SwapchainHandle handle)
 		{
 			EMBER_PROFILE_SCOPE_C("gpu: build swapchain", PROFILE_COLOR_RENDER);
@@ -187,12 +187,9 @@ namespace ember::gpu
 				return Build::Suspended;
 			}
 
-			// A max of zero means unbounded; the engine's own cap keeps the per image arrays
-			// indexable.
-			u32 image_count = data.preferred_image_count > caps.minImageCount
-			                      ? data.preferred_image_count
-			                      : caps.minImageCount;
-			image_count = clamp(image_count, 1, vk::MAX_SWAPCHAIN_IMAGES);
+			// Vulkan uses zero for an unlimited maximum. Our own limit bounds the per-image tables.
+			u32 image_count = max(data.preferred_image_count, caps.minImageCount);
+			image_count = clamp(image_count, 1u, vk::MAX_SWAPCHAIN_IMAGES);
 			if (caps.maxImageCount != 0 && image_count > caps.maxImageCount)
 			{
 				image_count = caps.maxImageCount;
@@ -202,7 +199,8 @@ namespace ember::gpu
 			data.present_mode =
 			    choose_present_mode(b.ctx.adapter, data.surface, data.requested_mode);
 
-			// Copies in and out when offered: screenshots, and a blit from an offscreen target.
+			// Request transfer usage when supported so the image can serve screenshots and copies
+			// from an offscreen target.
 			VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 			usage |= caps.supportedUsageFlags &
 			         (VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
@@ -249,8 +247,8 @@ namespace ember::gpu
 			u32 count = 0;
 			EMBER_VK_CHECK(vkGetSwapchainImagesKHR(b.ctx.device, swapchain, &count, nullptr));
 
-			// The per image tables index by the driver's image index, so a chain with more images
-			// than they hold is unusable. Never acquired from, so it may go at once.
+			// The driver may create more images than requested. Reject a generation that cannot fit
+			// the tables; it has never been acquired from, so it can be destroyed immediately.
 			if (count > vk::MAX_SWAPCHAIN_IMAGES)
 			{
 				EMBER_ERROR("vulkan: the swapchain has {} images; the engine supports {}", count,
@@ -379,7 +377,8 @@ namespace ember::gpu
 
 				TextureState state = data->acquired_state;
 
-				// A frame that drew nothing presents a dark clear rather than garbage.
+				// An untouched acquired image has no contents worth presenting. Clear it before the
+				// final transition so a frame with no draws still has a defined result.
 				if (state == TextureState::Undefined)
 				{
 					image_barrier(commands, hot->image, TextureState::Undefined,
@@ -421,8 +420,8 @@ namespace ember::gpu
 				const PendingPresent& pending = slot.presents[i];
 				if (const SwapchainData* data = b.swapchains.get(pending.swapchain))
 				{
-					// All commands: the present transition retires in no stage, so a narrower
-					// scope would not cover it.
+					// Cover the whole finish submission, including the layout transition, before
+					// presentation is allowed to consume this signal.
 					signals[count++] = {
 					    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 					    .semaphore = data->present_semaphores[pending.image],
@@ -488,7 +487,8 @@ namespace ember::gpu
 			queue.lock.unlock();
 			note_result(b, result);
 
-			// Out of date or suboptimal here means a rebuild at the next acquire.
+			// Defer rebuilding until acquire(), which can choose the new extent and image
+			// generation.
 			for (u32 i = 0; i < count; ++i)
 			{
 				if (results[i] == VK_ERROR_OUT_OF_DATE_KHR || results[i] == VK_SUBOPTIMAL_KHR)
@@ -536,7 +536,7 @@ namespace ember::gpu
 		data.requested_mode = def.present_mode;
 		data.preferred_image_count = def.image_count;
 
-		// The surface outlives every generation of the chain for this window.
+		// Keep one surface across resizes. Only its swapchain generations need replacing.
 		data.surface = platform::vulkan::create_surface(def.window, b->ctx.instance);
 		if (data.surface == VK_NULL_HANDLE)
 		{
@@ -547,7 +547,8 @@ namespace ember::gpu
 			return {};
 		}
 
-		// Suspended is fine: a window made minimized builds at its first acquire with pixels.
+		// A minimized window may create its chain later. Keep the surface and handle so acquire()
+		// can finish building when the window has a usable extent.
 		if (build(*b, data, handle) == Build::Failed)
 		{
 			destroy_swapchain(handle);
@@ -641,8 +642,8 @@ namespace ember::gpu
 
 		EMBER_PROFILE_SCOPE_C("gpu: acquire", PROFILE_COLOR_WAIT);
 
-		// Held across the park, which a JobMutex may be: a second job asking for the same image
-		// waits here and then takes the cached answer.
+		// JobMutex can stay held while the fiber waits for acquisition. Another caller for this
+		// swapchain waits here, then receives the same cached image for the frame.
 		data->lock.lock();
 
 		Backbuffer result = {};
@@ -656,7 +657,8 @@ namespace ember::gpu
 		bool rebuild = data->needs_recreate || data->swapchain == VK_NULL_HANDLE;
 
 #if defined(EMBER_HAS_PLATFORM)
-		// On main's fiber the window's size is at hand; elsewhere the driver says when it changed.
+		// Only main's fiber queries the window directly. Other callers learn of size changes
+		// through the surface results or a pending rebuild request.
 		if (jobs::is_main())
 		{
 			const Extent2D pixels = platform::window_size_in_pixels(data->window);
@@ -678,8 +680,8 @@ namespace ember::gpu
 
 		const u32 slot_index = (u32)(frame.index % b->ctx.in_flight);
 
-		// Out of date signals nothing and leaves the semaphore alone, so a retry with the same
-		// semaphore is safe. One rebuild, then the frame goes without.
+		// OUT_OF_DATE leaves the acquire semaphore unsignalled, so retry it after rebuilding.
+		// Allow two acquire attempts, then leave this frame without an image.
 		for (u32 attempt = 0; attempt < 2; ++attempt)
 		{
 			AcquireWait wait{
@@ -698,7 +700,8 @@ namespace ember::gpu
 
 			if (wait.result == VK_SUCCESS || wait.result == VK_SUBOPTIMAL_KHR)
 			{
-				// Suboptimal still signalled: draw and present this one, rebuild at the next.
+				// SUBOPTIMAL still acquired an image and submitted its semaphore signal. Present
+				// this image normally and request a new generation on the next acquire.
 				data->needs_recreate |= wait.result == VK_SUBOPTIMAL_KHR;
 				data->acquired_image = wait.image;
 				data->acquired_frame = frame.index;

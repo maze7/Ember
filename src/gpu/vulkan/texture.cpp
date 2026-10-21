@@ -1,7 +1,7 @@
-// Textures: an image and its views from VMA, a slot in the pool whose index is the bindless
-// slot, and the cold record beside it. Creation runs the driver calls outside the lock and takes
-// the lock for the pool alone. Destruction kills the handle under the lock and buries the natives,
-// which the graveyard releases once every frame that could read them has completed.
+// A texture owns an image, its views, and descriptor slots for shader access. VMA supplies the
+// image's memory. Create the Vulkan objects before taking the resource lock, then publish their
+// pool entries and descriptors together. Destruction invalidates the handle under that lock;
+// the graveyard keeps the objects and indices alive for frames that may still use them.
 
 #include <ember/gpu/gpu.h>
 
@@ -12,9 +12,10 @@ namespace ember::gpu
 {
 	namespace
 	{
+		// Uploads use transfer writes, so include that usage even when the caller omits CopyDst.
 		VkImageUsageFlags to_vk_usage(TextureUsage usage)
 		{
-			VkImageUsageFlags flags = 0;
+			VkImageUsageFlags flags = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
 			if (has_any(usage, TextureUsage::Sampled))
 			{
@@ -44,7 +45,8 @@ namespace ember::gpu
 			return flags;
 		}
 
-		// What the adapter must support in optimal tiling for the usage to work at all.
+		// Collect the format capabilities needed by the requested shader and attachment uses.
+		// The adapter check below applies them to optimal tiling.
 		VkFormatFeatureFlags required_features(TextureUsage usage)
 		{
 			VkFormatFeatureFlags features = 0;
@@ -88,15 +90,15 @@ namespace ember::gpu
 			return VK_IMAGE_VIEW_TYPE_2D;
 		}
 
-		// Storage views of a cube are 2D arrays, D3D12's rule for cube UAVs.
+		// Expose a cube's faces as a 2D array for storage access, matching the shader interface.
 		VkImageViewType storage_view_type(TextureType type)
 		{
 			return type == TextureType::TextureCube ? VK_IMAGE_VIEW_TYPE_2D_ARRAY
 			                                        : to_vk_view_type(type);
 		}
 
-		// The natives a texture is made of, before it has a slot. Freed as a unit when creation
-		// fails part way; nothing in flight can name them yet.
+		// Keep partially created objects together so any failure can release the whole texture.
+		// No pool entry refers to them yet, so cleanup does not need to wait for the GPU.
 		struct Natives
 		{
 			VkImage image = VK_NULL_HANDLE;
@@ -133,8 +135,8 @@ namespace ember::gpu
 		{
 			const VkFormat format = vk::to_vk(def.format);
 
-			// Optimal tiling support is per adapter, per format, per usage; the spec guarantees
-			// only a baseline, and RGB32Float sampling is the canonical hole.
+			// Format support depends on the adapter and intended use. Check before allocating so
+			// an unsupported combination fails here with the texture's name.
 			VkFormatProperties properties = {};
 			vkGetPhysicalDeviceFormatProperties(b.ctx.adapter, format, &properties);
 
@@ -149,8 +151,8 @@ namespace ember::gpu
 			const VkImageCreateInfo image_info{
 			    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 			    .flags = def.type == TextureType::TextureCube
-			                 ? (VkImageCreateFlags)VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT
-			                 : (VkImageCreateFlags)0,
+				             ? (VkImageCreateFlags)VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT
+				             : (VkImageCreateFlags)0,
 			    .imageType =
 			        def.type == TextureType::Texture3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D,
 			    .format = format,
@@ -191,8 +193,8 @@ namespace ember::gpu
 				return false;
 			}
 
-			// Storage access addresses one mip at a time: a view per mip, the first in the slot
-			// the texture owns and the rest in hidden entries of their own.
+			// Storage descriptors select one mip. Mip zero uses the texture's own slot; each
+			// remaining mip gets a hidden pool entry and descriptor index.
 			if (has_any(def.usage, TextureUsage::Storage))
 			{
 				for (u32 mip = 0; mip < def.mip_count; ++mip)
@@ -212,8 +214,8 @@ namespace ember::gpu
 				}
 			}
 
-			// A target with more than one subresource carries single slice views for the render
-			// pass to pick by mip and layer.
+			// Rendering selects one mip and layer at a time. Prebuild those attachment views
+			// when the full image view cannot name just that subresource.
 			const bool target =
 			    has_any(def.usage, TextureUsage::ColorTarget | TextureUsage::DepthTarget);
 			if (target && (def.mip_count > 1 || def.layers > 1))
@@ -306,7 +308,8 @@ namespace ember::gpu
 			return {};
 		}
 
-		// Hidden entries first, so a full pool fails before the texture's own slot is taken.
+		// Claim the hidden mip entries first. If any claim fails, return them without publishing
+		// the texture's main handle or descriptors.
 		TextureHandle mips[MAX_MIP_LEVELS] = {};
 		TextureHandle handle;
 
@@ -349,6 +352,26 @@ namespace ember::gpu
 			cold.attachment_views = natives.attachment_views;
 			cold.attachment_view_count = natives.attachment_view_count;
 
+			// Storage descriptors use GENERAL. Sampled descriptors share that layout when the
+			// texture also supports storage; otherwise they expect SHADER_READ_ONLY_OPTIMAL.
+			// This records the expected layout without transitioning the new image.
+			const bool sampled = has_any(def.usage, TextureUsage::Sampled);
+			const bool storage = has_any(def.usage, TextureUsage::Storage);
+			cold.read_layout =
+			    storage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+			// Reclaimed slots have already waited for their old GPU users. Write the new
+			// descriptors before returning a handle that recording jobs can use.
+			if (sampled)
+			{
+				vk::heap_write_sampled(*b, handle.index(), natives.view, cold.read_layout,
+				    def.type);
+			}
+			if (storage)
+			{
+				vk::heap_write_storage(*b, handle.index(), natives.storage_view, def.type);
+			}
+
 			for (u32 mip = 1; mip < def.mip_count; ++mip)
 			{
 				cold.mip_storage[mip] = mips[mip];
@@ -360,7 +383,9 @@ namespace ember::gpu
 					entry.format = cold.format;
 					entry.api_format = def.format;
 					entry.type = def.type;
+					entry.read_layout = VK_IMAGE_LAYOUT_GENERAL;
 					entry.parent = handle;
+					vk::heap_write_storage(*b, mips[mip].index(), natives.mip_views[mip], def.type);
 				}
 			}
 		}
@@ -386,7 +411,7 @@ namespace ember::gpu
 			return;
 		}
 
-		// The lookup is inside the lock so that two destroys of one handle stay idempotent.
+		// Resolve the handle under the lock so concurrent destroys cannot retire it twice.
 		b->resources_lock.lock();
 
 		const vk::TextureHot* hot = b->textures.get(handle);
@@ -432,8 +457,8 @@ namespace ember::gpu
 		                 .handle = (u64)hot->image,
 		                 .allocation = cold.allocation});
 
-		// Retire only: the slot goes back on the ring when the graveyard releases it, so the
-		// index cannot be reused while a frame in flight can still read it.
+		// Invalidate the handle without recycling its index yet. Shaders only carry that index,
+		// so the graveyard must wait for old users before another texture can claim it.
 		(void)b->textures.retire(handle);
 		vk::bury(*b, {.kind = vk::Dead::Kind::TextureSlot, .handle = handle.index()});
 

@@ -50,10 +50,15 @@ if(EMBER_BUILD_GRAPHICS)
 		SOURCES
 			gpu/types.cpp
 			gpu/vulkan/boot.cpp
+			gpu/vulkan/buffer.cpp
 			gpu/vulkan/commands.cpp
 			gpu/vulkan/frame.cpp
+			gpu/vulkan/heap.cpp
+			gpu/vulkan/pipeline.cpp
+			gpu/vulkan/sampler.cpp
 			gpu/vulkan/swapchain.cpp
 			gpu/vulkan/texture.cpp
+			gpu/vulkan/transient.cpp
 			gpu/vulkan/vma.cpp
 		PUBLIC_DEPS
 			ember::core

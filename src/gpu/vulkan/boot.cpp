@@ -1,6 +1,6 @@
-// Boot and shutdown: the loader, the instance, the adapter, the device with its queues and their
-// timelines, VMA, the pools and the slots. Everything here runs once, on main's fiber. boot() may
-// stop half way, and teardown() takes down whatever exists, in reverse.
+// Builds the Vulkan device and the storage its frame loop will reuse: queues and timelines,
+// resource pools, command lists, descriptor sets, and mapped rings. Initialization and shutdown run
+// on main's fiber. A failed boot takes the same teardown path as a normal shutdown.
 
 #include <ember/gpu/gpu.h>
 
@@ -8,6 +8,7 @@
 #include <ember/containers/vector.h>
 #include <ember/core/frame.h>
 #include <ember/core/jobs.h>
+#include <ember/math/scalar.h>
 #include <ember/memory/alignment.h>
 #include <ember/memory/heap.h>
 #include <ember/memory/new.h>
@@ -25,11 +26,11 @@ namespace ember::gpu
 {
 	namespace
 	{
-		// The one backend. A pointer, so the static holds nothing.
+		// Keep ownership in initialize()/shutdown(); static storage only needs the pointer.
 		vk::Backend* s_backend = nullptr;
 
-		// Validation messages since initialize(). Process statics, since a test reads them once the
-		// device is gone.
+		// Keep counts after shutdown so tests can inspect validation messages from device
+		// destruction. initialize() resets them for the next run.
 		std::atomic<u32> s_validation_errors{0};
 		std::atomic<u32> s_validation_warnings{0};
 		bool s_break_on_validation_error = false;
@@ -37,13 +38,12 @@ namespace ember::gpu
 		constexpr const char* VALIDATION_LAYER = "VK_LAYER_KHRONOS_validation";
 		constexpr u32 MAX_ENABLED_NAMES = 16;
 
-		// Vulkan's and VMA's CPU memory, from the heap under Tag::Graphics. A reallocation at an
-		// alignment the heap's reallocate cannot keep goes through a fresh block.
+		// Charge Vulkan and VMA CPU allocations to Graphics. Reallocation uses a fresh block so it
+		// can preserve alignments stronger than memory::reallocate() supports.
 		void* VKAPI_PTR allocate_callback(void*, size_t size, size_t alignment,
 		    VkSystemAllocationScope)
 		{
-			return memory::allocate(memory::Tag::Graphics, size,
-			    alignment > DEFAULT_ALIGNMENT ? alignment : DEFAULT_ALIGNMENT);
+			return memory::allocate(memory::Tag::Graphics, size, max(alignment, DEFAULT_ALIGNMENT));
 		}
 
 		void* VKAPI_PTR reallocate_callback(void*, void* original, size_t size, size_t alignment,
@@ -62,7 +62,7 @@ namespace ember::gpu
 
 			void* grown = allocate_callback(nullptr, size, alignment, scope);
 			const size_t old = memory::usable_size(original);
-			std::memcpy(grown, original, old < size ? old : size);
+			std::memcpy(grown, original, min(old, size));
 			memory::free(original);
 			return grown;
 		}
@@ -83,7 +83,8 @@ namespace ember::gpu
 				s_validation_errors.fetch_add(1, std::memory_order_relaxed);
 				EMBER_ERROR("vulkan[{}]: {}", id, data->pMessage);
 
-				// Inside the offending call, so the stack shows the cause.
+				// Break before returning from the offending call so its caller remains on the
+				// stack.
 				if (s_break_on_validation_error)
 				{
 					EMBER_DEBUG_BREAK();
@@ -99,12 +100,12 @@ namespace ember::gpu
 				EMBER_TRACE("vulkan[{}]: {}", id, data->pMessage);
 			}
 
-			// Never abort the call: the layer's job is to report.
+			// Report the error without asking the layer to abort the Vulkan call.
 			return VK_FALSE;
 		}
 
-		// Vulkan's count then fetch, into a vector under Graphics. Boot memory, freed at the end of
-		// the step that asked.
+		// Vulkan enumeration asks for a count before fetching the entries. Keep this temporary boot
+		// storage under Graphics and return an empty vector if either call fails.
 		template <typename T, typename F>
 		Vector<T> enumerate(F fetch)
 		{
@@ -147,7 +148,7 @@ namespace ember::gpu
 			return false;
 		}
 
-		// A required feature and its name, so an adapter that lacks one is refused by name.
+		// Pair each required flag with its name so rejected adapters explain what they lack.
 		template <typename S>
 		struct FeatureRef
 		{
@@ -161,8 +162,8 @@ namespace ember::gpu
 		&S::member, #member                                                                        \
 	}
 
-		// The feature set the engine requires, one table per chain struct. The same tables check
-		// an adapter and enable the device, so the two can never drift.
+		// Share these tables between adapter checks and device creation. Adding a requirement then
+		// checks support and enables it in the same place.
 		constexpr FeatureRef<VkPhysicalDeviceFeatures> REQUIRED_10[] = {
 		    EMBER_FEATURE(VkPhysicalDeviceFeatures, samplerAnisotropy),
 		    EMBER_FEATURE(VkPhysicalDeviceFeatures, depthClamp),
@@ -183,7 +184,7 @@ namespace ember::gpu
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan11Features, shaderDrawParameters),
 		};
 
-		// The timelines, host query reset and the bindless heap.
+		// Timeline waits, host-side timestamp resets, and bindless descriptors need these features.
 		constexpr FeatureRef<VkPhysicalDeviceVulkan12Features> REQUIRED_12[] = {
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan12Features, timelineSemaphore),
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan12Features, hostQueryReset),
@@ -209,9 +210,9 @@ namespace ember::gpu
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan12Features, scalarBlockLayout),
 		};
 
-		// Dynamic rendering and synchronization2 are how every pass and barrier is spelled. Shaders
-		// lower discard to demote, which keeps a discarded lane alive as a helper so its quad's
-		// derivatives stay defined along cutout edges.
+		// Passes and barriers use dynamic rendering and synchronization2. The shader path also
+		// needs demote-to-helper support so discarded fragments can still contribute to quad
+		// derivatives.
 		constexpr FeatureRef<VkPhysicalDeviceVulkan13Features> REQUIRED_13[] = {
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan13Features, dynamicRendering),
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan13Features, synchronization2),
@@ -221,8 +222,8 @@ namespace ember::gpu
 
 #undef EMBER_FEATURE
 
-		// The chain of feature structs an adapter is asked about and a device is made with. It
-		// points into itself, so it is never copied.
+		// Use the same feature chain for queries and device creation. Its pNext pointers refer to
+		// its own members, so copying it would leave pointers into the old object.
 		struct Features
 		{
 			VkPhysicalDeviceFeatures2 base{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
@@ -244,7 +245,7 @@ namespace ember::gpu
 			Features& operator=(const Features&) = delete;
 		};
 
-		// Scans the whole table, so an adapter under the bar logs its complete gap list at once.
+		// Report every missing flag in the table so fixing one does not hide the next requirement.
 		template <typename S, size_t N>
 		bool check(const S& available, const FeatureRef<S> (&required)[N], const char* adapter)
 		{
@@ -270,7 +271,8 @@ namespace ember::gpu
 			}
 		}
 
-		// What adapter selection learns and the rest of boot consumes. Dies with boot().
+		// Carry selection results through boot without keeping a second copy in the running
+		// backend.
 		struct AdapterInfo
 		{
 			VkPhysicalDevice handle = VK_NULL_HANDLE;
@@ -307,7 +309,7 @@ namespace ember::gpu
 			}
 		}
 
-		// Higher wins, strictly, so enumeration order decides ties.
+		// Prefer a strictly higher score. Equal scores keep the first adapter enumerated.
 		int adapter_score(AdapterKind kind, AdapterPreference preference)
 		{
 			if (preference == AdapterPreference::Any)
@@ -349,8 +351,8 @@ namespace ember::gpu
 			return VK_QUEUE_FAMILY_IGNORED;
 		}
 
-		// The loader, the layers and extensions, the instance, volk's instance table and the debug
-		// messenger.
+		// Load entry points and create the instance with its required layers and extensions. Keep
+		// validation optional so a machine without the SDK can still run the engine.
 		bool create_instance(vk::Backend& b, const GpuDef& def)
 		{
 			vk::Context& ctx = b.ctx;
@@ -367,8 +369,8 @@ namespace ember::gpu
 			else
 			{
 #if defined(EMBER_HAS_PLATFORM)
-				// The platform owns the library when there is a window system: surface creation
-				// shares its loader.
+				// Use the platform's loader for windowed operation so surface creation shares the
+				// same library and entry point source.
 				const platform::vulkan::ProcAddress proc = platform::vulkan::load();
 				if (proc == nullptr)
 				{
@@ -412,8 +414,8 @@ namespace ember::gpu
 					enabled_layers[layer_count++] = VALIDATION_LAYER;
 					validation = true;
 
-					// The layer brings extensions of its own, VK_EXT_validation_features among
-					// them.
+					// Include layer-provided extensions when checking for synchronization
+					// validation support.
 					const Vector<VkExtensionProperties> own = enumerate<VkExtensionProperties>(
 					    [](u32* count, VkExtensionProperties* out)
 					    {
@@ -432,8 +434,8 @@ namespace ember::gpu
 				}
 			}
 
-			// Debug utils stays on in every build that has it: names and labels in a capture cost
-			// nothing measurable.
+			// Keep names and labels available to capture tools whenever debug utils is installed,
+			// independently of whether validation is enabled.
 			if (has_extension(extensions, VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
 			{
 				enabled_extensions[extension_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
@@ -464,8 +466,9 @@ namespace ember::gpu
 			}
 #endif
 
-			// Handing the messenger to vkCreateInstance validates instance creation and destruction
-			// themselves; the same struct makes the persistent messenger below.
+			// Chain the callback into instance creation to catch messages before a persistent
+			// messenger exists, and during destruction after that messenger is gone. Reuse its
+			// settings below.
 			const void* next = nullptr;
 
 			VkDebugUtilsMessengerCreateInfoEXT messenger_info{
@@ -536,7 +539,7 @@ namespace ember::gpu
 				return false;
 			}
 
-			// Instance entry points now; device ones load per device, skipping the trampoline.
+			// Load instance functions here. Device functions are loaded after creating the device.
 			volkLoadInstanceOnly(ctx.instance);
 
 			if (ctx.debug_utils)
@@ -553,7 +556,8 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Rejects an adapter that cannot run the engine's contract; fills [out] for one that can.
+		// Check this adapter's required features, queue families, and descriptor limits. Only a
+		// successful result may be used to create the device from out.
 		bool query_adapter(const vk::Backend& b, VkPhysicalDevice handle, AdapterInfo& out)
 		{
 			out.handle = handle;
@@ -598,9 +602,8 @@ namespace ember::gpu
 			out.indirect_count = available.vulkan12.drawIndirectCount == VK_TRUE;
 			out.sampler_minmax = available.vulkan12.samplerFilterMinmax == VK_TRUE;
 
-			// The main family does graphics and compute, universal on desktop, and presents when
-			// there is a window system: a separate present family would buy ownership transfers
-			// every frame for nothing.
+			// Use one family for graphics, compute, and window presentation. Requiring presentation
+			// here keeps the backend from needing ownership transfers to a separate present family.
 			const Vector<VkQueueFamilyProperties> families = enumerate<VkQueueFamilyProperties>(
 			    [handle](u32* count, VkQueueFamilyProperties* data)
 			    {
@@ -636,7 +639,7 @@ namespace ember::gpu
 				return false;
 			}
 
-			// Families of their own for async compute and copies, when the adapter has them.
+			// Prefer compute-only and transfer-only families when the adapter provides them.
 			out.compute_family = find_family(families, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_GRAPHICS_BIT);
 			out.transfer_family = find_family(families, VK_QUEUE_TRANSFER_BIT,
 			    VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
@@ -658,8 +661,8 @@ namespace ember::gpu
 			std::snprintf(out.driver, sizeof(out.driver), "%s %s", driver.driverName,
 			    driver.driverInfo);
 
-			// The engine is bindless, so a heap that cannot hold the pools is an adapter that
-			// cannot run it. Refused here, where selection can still fall through.
+			// The descriptor arrays must cover the configured pools. Check before selecting the
+			// adapter so an insufficient limit lets selection continue to another device.
 			const GpuLimits& limits = b.def.limits;
 			const auto fits = [name](u32 available, u32 needed, const char* what)
 			{
@@ -689,8 +692,8 @@ namespace ember::gpu
 			return heap_ok;
 		}
 
-		// Filter then score: every adapter that can run the contract competes, and the best score
-		// wins, with enumeration order deciding ties.
+		// Score only adapters that meet the requirements. The highest score wins; enumeration order
+		// breaks ties, including AdapterPreference::Any.
 		bool select_adapter(const vk::Backend& b, const GpuDef& def, AdapterInfo& out)
 		{
 			const Vector<VkPhysicalDevice> adapters =
@@ -731,8 +734,8 @@ namespace ember::gpu
 			return true;
 		}
 
-		// The device with the required features and the optional ones the adapter has, one queue
-		// per distinct family, and volk's device table.
+		// Enable required and supported optional features, request one queue per distinct family,
+		// and load the device entry points after creation succeeds.
 		bool create_device(vk::Backend& b, const AdapterInfo& adapter)
 		{
 			vk::Context& ctx = b.ctx;
@@ -808,8 +811,9 @@ namespace ember::gpu
 
 			volkLoadDevice(ctx.device);
 
-			// One entry per distinct family; a Queue without a family of its own maps onto the
-			// graphics entry, where its submissions run in order with everything else.
+			// Deduplicate native queues so shared families also share a lock and timeline. Logical
+			// queues with no dedicated family map to graphics and execute on that same native
+			// queue.
 			const u32 families[vk::QUEUE_COUNT] = {adapter.graphics_family, adapter.compute_family,
 			    adapter.transfer_family};
 
@@ -878,8 +882,8 @@ namespace ember::gpu
 			return true;
 		}
 
-		// VMA over volk's tables, with our callbacks for its CPU side and the budget as a limit
-		// on every device local heap.
+		// Give VMA our CPU allocation callbacks and Vulkan entry points. A nonzero device budget
+		// limits each device-local heap separately.
 		bool create_allocator(vk::Backend& b, const AdapterInfo& adapter, const GpuDef& def)
 		{
 			VmaVulkanFunctions functions = {};
@@ -896,8 +900,7 @@ namespace ember::gpu
 				                                                   : VK_WHOLE_SIZE;
 			}
 
-			// Assignment rather than designated init: VMA's member order is not stable across
-			// versions.
+			// Assign by name so changes to VMA's member order do not affect this setup.
 			VmaAllocatorCreateInfo info = {};
 			info.physicalDevice = b.ctx.adapter;
 			info.device = b.ctx.device;
@@ -922,7 +925,7 @@ namespace ember::gpu
 			return true;
 		}
 
-		// A pure transform of what selection learned; the only writer of Caps.
+		// Publish the selected adapter's properties once; callers read Caps throughout device use.
 		void fill_caps(vk::Context& ctx, const AdapterInfo& adapter)
 		{
 			Caps& caps = ctx.caps;
@@ -935,9 +938,9 @@ namespace ember::gpu
 			caps.api_version = adapter.properties.apiVersion;
 			caps.adapter_kind = to_adapter_kind(adapter.properties.deviceType);
 
-			// Total device local memory, and whether a large device local, host visible type
-			// exists: a 256 MB heap is the old BAR window, anything larger is resizable BAR, SAM
-			// or unified memory.
+			// Sum device-local heaps and look for a host-visible type on one larger than 256 MiB.
+			// This threshold distinguishes a large mapping from the traditional small BAR window;
+			// it can also match unified memory and does not identify the hardware mechanism.
 			const VkPhysicalDeviceMemoryProperties& memory = adapter.memory;
 			caps.device_memory_bytes = 0;
 			for (u32 i = 0; i < memory.memoryHeapCount; ++i)
@@ -985,7 +988,7 @@ namespace ember::gpu
 			caps.async_compute = adapter.compute_family != VK_QUEUE_FAMILY_IGNORED;
 			caps.async_transfer = adapter.transfer_family != VK_QUEUE_FAMILY_IGNORED;
 
-			// Guaranteed by the spec's minimums; asserted so a broken driver is loud.
+			// Check the fixed push-constant and descriptor-set layout against the adapter's limits.
 			EMBER_ASSERT(limits.maxPushConstantsSize >= PUSH_CONSTANT_BYTES);
 			EMBER_ASSERT(limits.maxBoundDescriptorSets >= 2);
 		}
@@ -1022,8 +1025,9 @@ namespace ember::gpu
 			return true;
 		}
 
-		// One slot per frame in flight, each with its lists, their pools and its zone table, and
-		// the timestamp pool sliced across them.
+		// Reserve each frame slot's lists and query result storage at boot. Every list gets a
+		// private command pool, while one query pool covers all slots when timestamps are
+		// available.
 		bool create_slots(vk::Backend& b)
 		{
 			const u32 in_flight = b.ctx.in_flight;
@@ -1057,6 +1061,30 @@ namespace ember::gpu
 
 				if (!create_list(b, slot.finish, s, max_lists))
 				{
+					return false;
+				}
+
+				const VkCommandPoolCreateInfo upload_pool_info{
+				    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+				    .queueFamilyIndex = b.ctx.queues[0].family,
+				};
+				if (vkCreateCommandPool(b.ctx.device, &upload_pool_info, &b.ctx.callbacks,
+				        &slot.upload_pool) != VK_SUCCESS)
+				{
+					EMBER_ERROR("vulkan: upload pool creation failed");
+					return false;
+				}
+
+				const VkCommandBufferAllocateInfo upload_info{
+				    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+				    .commandPool = slot.upload_pool,
+				    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+				    .commandBufferCount = vk::MAX_UPLOAD_BATCHES,
+				};
+				if (vkAllocateCommandBuffers(b.ctx.device, &upload_info, slot.upload_batches) !=
+				    VK_SUCCESS)
+				{
+					EMBER_ERROR("vulkan: upload batch allocation failed");
 					return false;
 				}
 			}
@@ -1106,6 +1134,7 @@ namespace ember::gpu
 				}
 
 				vkDestroyCommandPool(b.ctx.device, slot.finish.pool, &b.ctx.callbacks);
+				vkDestroyCommandPool(b.ctx.device, slot.upload_pool, &b.ctx.callbacks);
 				memory::free(slot.zones);
 				slot.~Slot();
 			}
@@ -1121,7 +1150,7 @@ namespace ember::gpu
 		{
 			if (value < low || value > high)
 			{
-				const u32 clamped = value < low ? low : high;
+				const u32 clamped = clamp(value, low, high);
 				EMBER_WARN("gpu: GpuLimits::{} clamped from {} to {}", what, value, clamped);
 				return clamped;
 			}
@@ -1147,7 +1176,8 @@ namespace ember::gpu
 
 		void set_name(const Context& ctx, VkObjectType type, u64 handle, const char* name)
 		{
-			// Without the extension volk holds a trampoline into a table that never implemented it.
+			// A loaded trampoline is not proof the extension was enabled. Check before naming an
+			// object.
 			if (ctx.device == VK_NULL_HANDLE || !ctx.debug_utils || name == nullptr)
 			{
 				return;
@@ -1195,6 +1225,10 @@ namespace ember::gpu
 			    clamp_limit(limits.max_buffers, 1, Handle<Buffer>::MAX_INDEX + 1, "max_buffers");
 			limits.max_samplers =
 			    clamp_limit(limits.max_samplers, 1, MAX_BINDLESS_SAMPLERS, "max_samplers");
+			limits.max_graphics_pipelines = clamp_limit(limits.max_graphics_pipelines, 1,
+			    Pool<PipelineData, GraphicsPipeline>::MAX_CAPACITY, "max_graphics_pipelines");
+			limits.max_compute_pipelines = clamp_limit(limits.max_compute_pipelines, 1,
+			    Pool<PipelineData, ComputePipeline>::MAX_CAPACITY, "max_compute_pipelines");
 			limits.max_swapchains =
 			    clamp_limit(limits.max_swapchains, 1, MAX_SWAPCHAINS, "max_swapchains");
 			limits.max_command_lists =
@@ -1210,6 +1244,18 @@ namespace ember::gpu
 			{
 				::new ((void*)(b.texture_cold + i)) TextureCold();
 			}
+			b.buffers.initialize(heap, memory::Tag::Graphics, limits.max_buffers);
+			b.buffer_cold = (BufferCold*)memory::allocate(memory::Tag::Graphics,
+			    sizeof(BufferCold) * limits.max_buffers, alignof(BufferCold));
+			for (u32 i = 0; i < limits.max_buffers; ++i)
+			{
+				::new ((void*)(b.buffer_cold + i)) BufferCold();
+			}
+			b.samplers.initialize(heap, memory::Tag::Graphics, limits.max_samplers);
+			b.graphics_pipelines.initialize(heap, memory::Tag::Graphics,
+			    limits.max_graphics_pipelines);
+			b.compute_pipelines.initialize(heap, memory::Tag::Graphics,
+			    limits.max_compute_pipelines);
 			b.swapchains.initialize(heap, memory::Tag::Graphics, limits.max_swapchains);
 
 			if (!create_instance(b, def))
@@ -1239,6 +1285,14 @@ namespace ember::gpu
 				return false;
 			}
 
+			// Resource creation writes descriptors, so create their heap first. Make fallbacks
+			// before caller resources, and bind constants only after the transient buffer exists.
+			if (!heap_boot(b) || !heap_fallbacks(b) || !rings_boot(b))
+			{
+				return false;
+			}
+			heap_bind_constants(b);
+
 			constexpr const char* KINDS[] = {"other", "integrated", "discrete", "virtual", "cpu"};
 			EMBER_INFO("vulkan: {} ({}) | {} | Vulkan {}.{}.{} | {} MB{} | {} queue{}",
 			    ctx.caps.adapter_name, KINDS[(u32)ctx.caps.adapter_kind], adapter.driver,
@@ -1259,7 +1313,8 @@ namespace ember::gpu
 			{
 				(void)vkDeviceWaitIdle(ctx.device);
 
-				// Swapchains through their own path, so backbuffers go with them.
+				// Use the swapchain destruction path so its backbuffer handles and semaphores
+				// retire with it.
 				SwapchainHandle swapchains[MAX_SWAPCHAINS];
 				u32 swapchain_count = 0;
 				for (auto it = b.swapchains.begin(); it != b.swapchains.end(); ++it)
@@ -1271,7 +1326,15 @@ namespace ember::gpu
 					destroy_swapchain(swapchains[i]);
 				}
 
-				// Textures the game forgot. Hidden mip entries die with their owners.
+				// Release backend-owned resources before reporting caller resources left alive.
+				// Disable fallback resets before their views can be destroyed. Hidden mip entries
+				// follow their owner and must not be counted or destroyed separately.
+				if (b.heap.set != VK_NULL_HANDLE)
+				{
+					rings_shutdown(b);
+					heap_release_fallbacks(b);
+				}
+
 				u32 leaked = 0;
 				for (auto it = b.textures.begin(); it != b.textures.end();)
 				{
@@ -1285,19 +1348,53 @@ namespace ember::gpu
 					}
 				}
 
+				for (auto it = b.buffers.begin(); it != b.buffers.end();)
+				{
+					const BufferHandle handle = it.handle();
+					++it;
+					++leaked;
+					destroy(handle);
+				}
+
+				for (auto it = b.samplers.begin(); it != b.samplers.end();)
+				{
+					const SamplerHandle handle = it.handle();
+					++it;
+					++leaked;
+					destroy(handle);
+				}
+
+				for (auto it = b.graphics_pipelines.begin(); it != b.graphics_pipelines.end();)
+				{
+					const GraphicsPipelineHandle handle = it.handle();
+					++it;
+					++leaked;
+					destroy(handle);
+				}
+
+				for (auto it = b.compute_pipelines.begin(); it != b.compute_pipelines.end();)
+				{
+					const ComputePipelineHandle handle = it.handle();
+					++it;
+					++leaked;
+					destroy(handle);
+				}
+
 				if (leaked != 0)
 				{
-					EMBER_WARN("gpu: {} texture{} still alive at shutdown", leaked,
+					EMBER_WARN("gpu: {} resource{} still alive at shutdown", leaked,
 					    leaked == 1 ? "" : "s");
 				}
 
-				// Idle proves every value signalled, so everything in the graveyard may go.
+				// Shutdown has stopped device work. Retire every queued entry before destroying the
+				// allocator, descriptor heap, and device they depend on.
 				for (u32 i = 0; i < ctx.queue_count; ++i)
 				{
 					raise_completed(ctx.queues[i], ctx.queues[i].submitted);
 				}
 				drain(b, true);
 
+				heap_shutdown(b);
 				destroy_slots(b);
 				for (u32 i = 0; i < ctx.queue_count; ++i)
 				{
@@ -1314,7 +1411,8 @@ namespace ember::gpu
 				vkDestroyInstance(ctx.instance, &ctx.callbacks);
 			}
 
-			// Safe when volk never initialized: it nulls its pointers.
+			// Finalization also clears entry pointers when initialization stopped before a loader
+			// existed.
 			volkFinalize();
 
 #if defined(EMBER_HAS_PLATFORM)
@@ -1325,8 +1423,14 @@ namespace ember::gpu
 #endif
 
 			b.swapchains.shutdown();
+			b.compute_pipelines.shutdown();
+			b.graphics_pipelines.shutdown();
+			b.samplers.shutdown();
+			b.buffers.shutdown();
 			b.textures.shutdown();
+			memory::free(b.buffer_cold);
 			memory::free(b.texture_cold);
+			b.buffer_cold = nullptr;
 			b.texture_cold = nullptr;
 		}
 	}

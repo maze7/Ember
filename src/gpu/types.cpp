@@ -1,6 +1,7 @@
 #include <ember/gpu/types.h>
 
 #include <ember/core/macros.h>
+#include <ember/math/scalar.h>
 
 namespace ember::gpu
 {
@@ -42,12 +43,6 @@ namespace ember::gpu
 		    "FORMATS mirrors TextureFormat one to one");
 		static_assert(FORMATS[(u32)TextureFormat::D32Float].depth);
 		static_assert(FORMATS[(u32)TextureFormat::BC7Srgb].block_bytes == 16);
-
-		u32 half(u32 value, u32 mip)
-		{
-			const u32 halved = value >> mip;
-			return halved > 0 ? halved : 1;
-		}
 	}
 
 	FormatInfo format_info(TextureFormat format)
@@ -58,13 +53,16 @@ namespace ember::gpu
 
 	Extent3D mip_extent(Extent3D extent, u32 mip)
 	{
-		return {half(extent.width, mip), half(extent.height, mip), half(extent.depth, mip)};
+		return {
+		    max(extent.width >> mip, 1u),
+		    max(extent.height >> mip, 1u),
+		    max(extent.depth >> mip, 1u),
+		};
 	}
 
 	u32 full_mip_count(Extent3D extent)
 	{
-		u32 largest = extent.width > extent.height ? extent.width : extent.height;
-		largest = largest > extent.depth ? largest : extent.depth;
+		u32 largest = max(max(extent.width, extent.height), extent.depth);
 
 		u32 count = 1;
 		while (largest > 1)
