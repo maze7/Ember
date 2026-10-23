@@ -622,7 +622,8 @@ namespace ember::gpu
 			return;
 		}
 
-		vkCmdBindPipeline(list->commands, VK_PIPELINE_BIND_POINT_GRAPHICS, data->pipeline);
+		vkCmdBindPipeline(list->commands, VK_PIPELINE_BIND_POINT_GRAPHICS,
+		    data->pipeline.load(std::memory_order_acquire));
 		list->graphics_pipeline = pipeline;
 	}
 
@@ -640,7 +641,8 @@ namespace ember::gpu
 			return;
 		}
 
-		vkCmdBindPipeline(list->commands, VK_PIPELINE_BIND_POINT_COMPUTE, data->pipeline);
+		vkCmdBindPipeline(list->commands, VK_PIPELINE_BIND_POINT_COMPUTE,
+		    data->pipeline.load(std::memory_order_acquire));
 		list->compute_pipeline = pipeline;
 	}
 

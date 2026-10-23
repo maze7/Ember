@@ -2,6 +2,7 @@
 // descriptor index when shaders use it as storage. All buffers accept transfer writes so
 // upload() can fill them. Upload and Readback allocations stay mapped and require coherent
 // memory, so CPU access needs no flush or invalidate. Callers still synchronize GPU access.
+// Replacement puts a new buffer behind an existing entry, keeping the handle and its index.
 
 #include <ember/gpu/gpu.h>
 
@@ -33,6 +34,93 @@ namespace ember::gpu
 			}
 
 			return flags;
+		}
+
+		bool same_shape(const vk::BufferCold& cold, const BufferDef& def)
+		{
+			return cold.size == def.size && cold.usage == def.usage && cold.memory == def.memory;
+		}
+
+		// Create the Vulkan buffer and its memory for def, mapped when the location calls for it.
+		bool create_native(vk::Backend& b, const BufferDef& def, VkBuffer& buffer,
+		    VmaAllocation& allocation, VmaAllocationInfo& mapping)
+		{
+			const vk::BufferSharing sharing = vk::buffer_sharing(b.ctx);
+			const VkBufferCreateInfo info{
+			    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			    .size = def.size,
+			    .usage = to_vk_usage(def.usage),
+			    .sharingMode = sharing.mode,
+			    .queueFamilyIndexCount = sharing.count,
+			    .pQueueFamilyIndices = sharing.families,
+			};
+
+			VmaAllocationCreateInfo allocation_info = {};
+			switch (def.memory)
+			{
+				case MemoryLocation::DeviceLocal:
+					allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+					break;
+
+				// Prefer device memory the CPU can map, and tell VMA that writes will be
+				// sequential. Host visibility and coherence are required; device-local placement
+				// is a preference.
+				case MemoryLocation::Upload:
+					allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+					allocation_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+					                        VMA_ALLOCATION_CREATE_MAPPED_BIT;
+					allocation_info.requiredFlags =
+					    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+					break;
+
+				// Prefer host memory that caches CPU reads. Coherence is required, while caching
+				// is a preference, so reading back still works when that memory type is
+				// unavailable.
+				case MemoryLocation::Readback:
+					allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+					allocation_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+					                        VMA_ALLOCATION_CREATE_MAPPED_BIT;
+					allocation_info.requiredFlags =
+					    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+					allocation_info.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+					break;
+
+				case MemoryLocation::Count:
+					return false;
+			}
+
+			if (const VkResult result = vmaCreateBuffer(b.ctx.allocator, &info, &allocation_info,
+			        &buffer, &allocation, &mapping);
+			    result != VK_SUCCESS)
+			{
+				EMBER_ERROR("gpu: buffer '{}' creation failed: {}", def.name,
+				    vk::result_name(result));
+				return false;
+			}
+
+			return true;
+		}
+
+		// Record the def and the native objects in the handle's entry and write its storage
+		// descriptor. Reclaimed slots have already waited for their old GPU users. The caller
+		// holds resources_lock.
+		void publish(vk::Backend& b, BufferHandle handle, const BufferDef& def, VkBuffer buffer,
+		    VmaAllocation allocation, const VmaAllocationInfo& mapping)
+		{
+			b.buffers.get(handle)->buffer = buffer;
+
+			vk::BufferCold& cold = b.buffer_cold[handle.index()];
+			cold = vk::BufferCold{};
+			cold.allocation = allocation;
+			cold.size = def.size;
+			cold.mapped = mapping.pMappedData;
+			cold.usage = def.usage;
+			cold.memory = def.memory;
+
+			if (has_any(def.usage, BufferUsage::Storage))
+			{
+				vk::heap_write_buffer(b, handle.index(), buffer, def.size);
+			}
 		}
 	}
 
@@ -69,81 +157,20 @@ namespace ember::gpu
 			return {};
 		}
 
-		const vk::BufferSharing sharing = vk::buffer_sharing(b->ctx);
-		const VkBufferCreateInfo info{
-		    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		    .size = def.size,
-		    .usage = to_vk_usage(def.usage),
-		    .sharingMode = sharing.mode,
-		    .queueFamilyIndexCount = sharing.count,
-		    .pQueueFamilyIndices = sharing.families,
-		};
-
-		VmaAllocationCreateInfo allocation_info = {};
-		switch (def.memory)
-		{
-			case MemoryLocation::DeviceLocal:
-				allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-				break;
-
-			// Prefer device memory the CPU can map, and tell VMA that writes will be sequential.
-			// Host visibility and coherence are required; device-local placement is a preference.
-			case MemoryLocation::Upload:
-				allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-				allocation_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-				                        VMA_ALLOCATION_CREATE_MAPPED_BIT;
-				allocation_info.requiredFlags =
-				    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-				break;
-
-			// Prefer host memory that caches CPU reads. Coherence is required, while caching
-			// is a preference, so reading back still works when that memory type is unavailable.
-			case MemoryLocation::Readback:
-				allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
-				allocation_info.flags =
-				    VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-				allocation_info.requiredFlags =
-				    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-				allocation_info.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-				break;
-
-			case MemoryLocation::Count:
-				return {};
-		}
-
 		VkBuffer buffer = VK_NULL_HANDLE;
 		VmaAllocation allocation = VK_NULL_HANDLE;
 		VmaAllocationInfo mapping = {};
-
-		if (const VkResult result = vmaCreateBuffer(b->ctx.allocator, &info, &allocation_info,
-		        &buffer, &allocation, &mapping);
-		    result != VK_SUCCESS)
+		if (!create_native(*b, def, buffer, allocation, mapping))
 		{
-			EMBER_ERROR("gpu: buffer '{}' creation failed: {}", def.name, vk::result_name(result));
 			return {};
 		}
 
 		b->resources_lock.lock();
-		const BufferHandle handle = b->buffers.emplace(vk::BufferHot{.buffer = buffer});
-
+		const BufferHandle handle = b->buffers.emplace();
 		if (!handle.is_null())
 		{
-			vk::BufferCold& cold = b->buffer_cold[handle.index()];
-			cold = vk::BufferCold{};
-			cold.allocation = allocation;
-			cold.size = def.size;
-			cold.mapped = mapping.pMappedData;
-			cold.usage = def.usage;
-			cold.memory = def.memory;
-
-			// Reclaimed slots have already waited for their old GPU users. Publish the storage
-			// descriptor before returning the new handle, while pool changes remain locked.
-			if (has_any(def.usage, BufferUsage::Storage))
-			{
-				vk::heap_write_buffer(*b, handle.index(), buffer, def.size);
-			}
+			publish(*b, handle, def, buffer, allocation, mapping);
 		}
-
 		b->resources_lock.unlock();
 
 		if (handle.is_null())
@@ -155,6 +182,65 @@ namespace ember::gpu
 
 		vk::set_name(b->ctx, VK_OBJECT_TYPE_BUFFER, (u64)buffer, def.name);
 		return handle;
+	}
+
+	bool replace(BufferHandle handle, const BufferDef& def)
+	{
+		vk::Backend* b = vk::backend();
+		if (b == nullptr)
+		{
+			return false;
+		}
+
+		if (!is_valid(def))
+		{
+			EMBER_ERROR("gpu: buffer '{}' has an invalid def", def.name);
+			return false;
+		}
+
+		const vk::BufferHot* hot = b->buffers.get(handle);
+		if (hot == nullptr)
+		{
+			EMBER_ERROR("gpu: replace of a stale buffer with '{}'", def.name);
+			return false;
+		}
+
+		if (handle == b->transient.handle)
+		{
+			EMBER_ERROR("gpu: '{}' would replace the transient ring", def.name);
+			return false;
+		}
+
+		const vk::BufferCold& cold = b->buffer_cold[handle.index()];
+		if (same_shape(cold, def))
+		{
+			return true;
+		}
+
+		VkBuffer buffer = VK_NULL_HANDLE;
+		VmaAllocation allocation = VK_NULL_HANDLE;
+		VmaAllocationInfo mapping = {};
+		if (!create_native(*b, def, buffer, allocation, mapping))
+		{
+			return false;
+		}
+
+		// A pending frame may be reading this entry's descriptor, which Vulkan forbids rewriting
+		// until it has completed. Between frames nothing is open, so waiting out the frames in
+		// flight leaves nothing pending.
+		EMBER_ASSERT_MSG(!vk::any_frame_open(*b), "replace() with a new shape needs no frame open");
+		vk::wait_frames(*b);
+
+		b->resources_lock.lock();
+		vk::bury(*b, {.kind = vk::Dead::Kind::Buffer,
+		                 .handle = (u64)hot->buffer,
+		                 .allocation = cold.allocation});
+		vk::heap_reset_buffer(*b, handle.index());
+		publish(*b, handle, def, buffer, allocation, mapping);
+		b->resources_lock.unlock();
+
+		vk::set_name(b->ctx, VK_OBJECT_TYPE_BUFFER, (u64)buffer, def.name);
+		return true;
 	}
 
 	void destroy(BufferHandle handle)

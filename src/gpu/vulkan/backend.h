@@ -252,9 +252,10 @@ namespace ember::gpu::vk
 	};
 
 	// Pipelines all share the bindless heap's layout, so only the compiled pipeline is needed.
+	// replace() swaps it while recording jobs may be reading it, so both go through the atomic.
 	struct PipelineData
 	{
-		VkPipeline pipeline = VK_NULL_HANDLE;
+		std::atomic<VkPipeline> pipeline{VK_NULL_HANDLE};
 	};
 
 	// Owns a swapchain's native objects, semaphores, and backbuffer handles. The JobMutex
@@ -523,6 +524,14 @@ namespace ember::gpu::vk
 	// Poll each queue's timeline, then resolve closed frames whose submission values have passed
 	// and end their Stage::Gpu.
 	void poll(Backend& backend);
+
+	// True while any frame is open. A frame's lists could be using descriptors, so replace()
+	// swaps them only when this is false.
+	bool any_frame_open(const Backend& backend);
+
+	// Wait out every frame in flight, after which nothing is pending on any queue. Parks the
+	// caller like wait_frame(). Only legal with no frame open.
+	void wait_frames(Backend& backend);
 
 	// Any thread may wait for a timeline value. Completed values return immediately; pending ones
 	// use run_blocking(). A lost device also ends the wait without claiming completion.

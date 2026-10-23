@@ -360,6 +360,34 @@ namespace ember::gpu
 			}
 		}
 
+		bool any_frame_open(const Backend& b)
+		{
+			for (u32 i = 0; i < b.ctx.in_flight; ++i)
+			{
+				if (is_open(b.slots[i]))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		void wait_frames(Backend& b)
+		{
+			EMBER_ASSERT_MSG(!any_frame_open(b), "waiting out the frames while one is open");
+
+			for (u32 i = 0; i < b.ctx.in_flight; ++i)
+			{
+				Slot& slot = b.slots[i];
+				const SlotState state = slot.state.load(std::memory_order_acquire);
+				if (state == SlotState::Closed || state == SlotState::Finishing)
+				{
+					wait_slot(b, slot);
+				}
+			}
+		}
+
 		void run_blocking(jobs::JobFn fn, void* data, const char* name)
 		{
 			// Let an I/O thread do the blocking call while a scheduler fiber waits on its counter.

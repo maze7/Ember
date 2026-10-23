@@ -7,6 +7,8 @@
 // their mutations, while handle lookups check pool generations without a lock.
 // A successful lookup does not keep an object alive. Callers order resource use
 // and frame retirement, and finish all frame users before closing or reusing it.
+// Handles are stable identities: replace() changes what is behind one, so hot
+// reloading never touches the code that took the handle.
 // Each command list has one writer and its own pool, so recording can continue
 // on another worker after a fiber wait.
 //
@@ -327,6 +329,23 @@ namespace ember::gpu
 	bool is_valid(SamplerHandle handle);
 	bool is_valid(GraphicsPipelineHandle handle);
 	bool is_valid(ComputePipelineHandle handle);
+
+	// Replaces what a handle refers to while the handle, and the bindless index that
+	// shaders and GPU data hold, stay the same, so nothing that took the handle has
+	// to hear about a reload. A pipeline swaps at once from any thread; a list
+	// recording meanwhile binds the old or the new one, and the old lives in the
+	// graveyard until its frames complete. Textures, buffers and samplers carry
+	// descriptors that pending frames may be using, and Vulkan permits rewriting
+	// such a descriptor only once nothing is pending, so those swap between frames:
+	// the call asserts that no frame is open, waits out the frames in flight, then
+	// swaps. A texture or buffer def matching the existing shape keeps its storage
+	// and returns true without waiting; upload() the new contents afterwards. A def
+	// the adapter refuses leaves the old object in place and returns false.
+	bool replace(TextureHandle handle, const TextureDef& def);
+	bool replace(BufferHandle handle, const BufferDef& def);
+	bool replace(SamplerHandle handle, const SamplerDef& def);
+	bool replace(GraphicsPipelineHandle handle, const GraphicsPipelineDef& def);
+	bool replace(ComputePipelineHandle handle, const ComputePipelineDef& def);
 
 	// Requires a texture created with TextureUsage::Storage. Mip zero returns its
 	// pool index; deeper mips have hidden entries created with it. Returns zero for
