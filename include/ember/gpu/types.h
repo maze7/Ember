@@ -183,6 +183,7 @@ namespace ember::gpu
 	// name is borrowed during creation for diagnostics. Only 3D textures use depth
 	// above one; array layers are explicit, with six layers for a cube. usage names
 	// at least one shader or attachment use; a copy-only image would have no view.
+	// 3D textures are filled by compute or copies, never used as attachments.
 	struct TextureDef
 	{
 		const char* name = "texture";

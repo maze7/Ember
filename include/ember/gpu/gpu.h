@@ -10,7 +10,8 @@
 // Handles are stable identities: replace() changes what is behind one, so hot
 // reloading never touches the code that took the handle.
 // Each command list has one writer and its own pool, so recording can continue
-// on another worker after a fiber wait.
+// on another worker after a fiber wait. The frame loop's fiber drives frames and
+// alone processes their completion; jobs record, upload and submit.
 //
 // Driver waits use an I/O task when a scheduler caller can submit one. The fiber
 // parks on its counter. External threads and failed I/O submissions run the call
@@ -74,9 +75,12 @@ namespace ember::gpu
 		u32 max_compute_pipelines = 512;
 		u32 max_swapchains = 4;
 
-		// Maximum lists opened by one frame. Each has its own command pool and query
-		// range so concurrent recorders do not share that recording storage.
-		u32 max_command_lists = 32;
+		// Lists one frame may open on each logical queue. Each has its own command pool
+		// and query range, so these are native-object budgets as much as capacities:
+		// every slot in flight holds all of them. Zero leaves a queue without lists.
+		u32 max_graphics_lists = 32;
+		u32 max_compute_lists = 8;
+		u32 max_transfer_lists = 4;
 	};
 
 	struct GpuDef
@@ -226,13 +230,16 @@ namespace ember::gpu
 		f32 duration_ms = 0.0f;
 	};
 
-	// Diagnostic usage figures. Ring usage is cached at end_frame(); resource
-	// counts and device allocations are sampled by stats(). They do not form
-	// one synchronized snapshot of concurrent activity.
+	// Diagnostic usage figures. Ring usage is cached at end_frame(), with the
+	// highest frame so far kept for sizing GpuDef's budgets; resource counts and
+	// device allocations are sampled by stats(). They do not form one synchronized
+	// snapshot of concurrent activity.
 	struct GpuStats
 	{
 		u64 transient_bytes = 0;
 		u64 staging_bytes = 0;
+		u64 transient_peak_bytes = 0;
+		u64 staging_peak_bytes = 0;
 		u64 device_memory_bytes = 0;
 		u32 buffers = 0;
 		u32 textures = 0;
@@ -263,14 +270,16 @@ namespace ember::gpu
 
 	// Opens the frame's slot, waiting for its previous GPU use before resetting
 	// command pools and mapped slices. Publish the initialized frame before jobs
-	// use it. Pair begin and end even when no application work is recorded.
+	// use it. Pair begin and end even when no application work is recorded. This,
+	// end_frame() and wait_frame() run on the frame loop's fiber, which alone
+	// completes frames: ending Stage::Gpu, resolving zones and freeing retirement.
 	void begin_frame(Frame& frame);
 
 	// Closes the frame after all its recording, upload, acquire, and submit calls
-	// have finished. Flushes pending uploads, transitions acquired images to Present,
-	// submits the final graphics work, and requests presentation. Callers supply
-	// dependencies on independent queues. Stage::Present measures the CPU handoff;
-	// Stage::Gpu ends when the frame's timeline completion is processed.
+	// have finished. Submits any uploads still pending, transitions acquired images
+	// to Present, submits the final graphics work, and requests presentation.
+	// Callers supply dependencies on independent queues. Stage::Present measures
+	// the CPU handoff; Stage::Gpu ends when the frame's completion is processed.
 	void end_frame(Frame& frame);
 
 	// Waits for an ended frame's recorded queue values and processes its completion.
@@ -289,10 +298,18 @@ namespace ember::gpu
 	// from this job or another, before ending its frame.
 	void end_command_list(CommandList* list);
 
-	// Submits the lists and returns their queue timeline point. Graphics submissions
-	// flush the pending upload batch before the supplied lists. Order uploads before
-	// this call when they must be included, and provide waits for cross-queue uses.
+	// Submits the lists and returns their queue timeline point. Lists that read
+	// uploaded data wait on the point submit_uploads() returned for it, and work on
+	// another queue waits on the point of the submission it depends on.
 	Submission submit(const Frame& frame, const SubmitDef& def);
+
+	// Submits the frame's pending uploads and returns the point covering every
+	// upload recorded so far this frame, by any thread. upload() only records; the
+	// copies execute when this or end_frame() submits them. A zero point means
+	// nothing has been uploaded this frame. The backend chooses the queue, graphics
+	// today, so a same-queue consumer is ordered by the queue alone, but passing the
+	// point as a wait keeps it correct when uploads move to the transfer queue.
+	Submission submit_uploads(const Frame& frame);
 
 	// Checks cached completion and queries the queue timeline when needed.
 	// A zero submission is already complete.
@@ -304,6 +321,7 @@ namespace ember::gpu
 
 	// Performs a device-wide wait and drains pending retirement. Reserve this for
 	// teardown or recovery, with CPU submitters stopped, rather than normal frames.
+	// Runs on the frame loop's fiber.
 	void wait_idle();
 
 	[[nodiscard]] BufferHandle create_buffer(const BufferDef& def);
@@ -330,17 +348,20 @@ namespace ember::gpu
 	bool is_valid(GraphicsPipelineHandle handle);
 	bool is_valid(ComputePipelineHandle handle);
 
-	// Replaces what a handle refers to while the handle, and the bindless index that
-	// shaders and GPU data hold, stay the same, so nothing that took the handle has
-	// to hear about a reload. A pipeline swaps at once from any thread; a list
-	// recording meanwhile binds the old or the new one, and the old lives in the
-	// graveyard until its frames complete. Textures, buffers and samplers carry
-	// descriptors that pending frames may be using, and Vulkan permits rewriting
-	// such a descriptor only once nothing is pending, so those swap between frames:
-	// the call asserts that no frame is open, waits out the frames in flight, then
-	// swaps. A texture or buffer def matching the existing shape keeps its storage
-	// and returns true without waiting; upload() the new contents afterwards. A def
-	// the adapter refuses leaves the old object in place and returns false.
+	// Replaces what a handle refers to while the handle, and every bindless index it
+	// handed out including storage_index() values, stay the same, so nothing that
+	// took the handle has to hear about a reload. A pipeline swaps at once from any
+	// thread; a list recording meanwhile binds the old or the new one, and the old
+	// lives in the graveyard until its frames complete. Textures, buffers and
+	// samplers carry descriptors that pending frames may be using, and Vulkan
+	// permits rewriting such a descriptor only once nothing is pending, so those
+	// swap between frames on the frame loop's fiber: the call asserts that no frame
+	// is open, waits out the frames in flight, then swaps. That wait makes this a
+	// tooling path for reloads and editor edits; streaming that must overlap
+	// rendering creates a new resource and switches at the asset layer. A texture or
+	// buffer def matching the existing shape keeps its storage and returns true
+	// without waiting; upload() the new contents afterwards. A def the adapter
+	// refuses leaves the old object in place and returns false.
 	bool replace(TextureHandle handle, const TextureDef& def);
 	bool replace(BufferHandle handle, const BufferDef& def);
 	bool replace(SamplerHandle handle, const SamplerDef& def);
@@ -363,9 +384,12 @@ namespace ember::gpu
 	// allocation, with exhaustion logged once per slice. Storage lasts until slot reuse.
 	Transient allocate_transient(const Frame& frame, u32 size, u32 alignment);
 
-	// Copies data into staging storage before returning, then records a GPU copy
-	// ahead of the next graphics submission that flushes the batch. Consumers on
-	// independent queues wait on that submission. Texture data replaces one whole,
+	// Copies data into staging storage before returning and records a GPU copy
+	// into the frame's upload batch, which submit_uploads() or end_frame() submits.
+	// Consumers in this frame wait on the point submit_uploads() returns; later
+	// frames on the same queue are ordered by the queue. A texture uploaded here is
+	// owned by the upload queue's family; move it with a barrier before another
+	// family reads it. Texture data replaces one whole,
 	// tightly packed mip and layer, including block rows. The texture ends in
 	// ShaderRead when a shader can read it, in ColorTarget or DepthTarget when it
 	// is only an attachment, and in CopyDst when it is only a copy target.

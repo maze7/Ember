@@ -2,8 +2,8 @@
 // image's memory. Create the Vulkan objects before taking the resource lock, then publish their
 // pool entries and descriptors together. Destruction invalidates the handle under that lock;
 // the graveyard keeps the objects and indices alive for frames that may still use them.
-// Replacement retires the natives the same way but keeps the entry, so the handle and its
-// bindless index outlive the image behind them.
+// Replacement retires the natives the same way but keeps the entries, so the handle, its
+// bindless index and the storage indices of its mips outlive the image behind them.
 
 #include <ember/gpu/gpu.h>
 
@@ -188,8 +188,12 @@ namespace ember::gpu
 			    .subresourceRange = {vk::aspect_of(def.format), 0, def.mip_count, 0, def.layers},
 			};
 
-			if (vkCreateImageView(b.ctx.device, &view_info, &b.ctx.callbacks, &out.view) !=
-			    VK_SUCCESS)
+			// The full-chain view serves sampling and single-subresource attachments. A
+			// storage-only texture reads and writes through its per-mip views instead.
+			if (has_any(def.usage, TextureUsage::Sampled | TextureUsage::ColorTarget |
+			                           TextureUsage::DepthTarget) &&
+			    vkCreateImageView(b.ctx.device, &view_info, &b.ctx.callbacks, &out.view) !=
+			        VK_SUCCESS)
 			{
 				EMBER_ERROR("gpu: texture '{}': view creation failed", def.name);
 				return false;
@@ -260,17 +264,24 @@ namespace ember::gpu
 			       cold.mip_count == def.mip_count && cold.usage == def.usage;
 		}
 
-		// Claim hidden pool entries for the storage views of mips above zero. Returns false, with
-		// nothing claimed, when the pool cannot hold them all. The caller holds resources_lock.
+		// Claim hidden pool entries for the storage views of mips above zero, reusing the entries
+		// an existing texture holds so a replacement keeps every storage index it handed out.
+		// Returns false, with nothing new claimed, when the pool cannot hold the rest. The caller
+		// holds resources_lock.
 		bool claim_mips(vk::Backend& b, const TextureDef& def, const Natives& natives,
-		    TextureHandle* mips)
+		    const vk::TextureCold* reuse, TextureHandle* mips)
 		{
 			bool full = false;
 			for (u32 mip = 1; mip < def.mip_count && natives.mip_views[mip] != VK_NULL_HANDLE;
 			    ++mip)
 			{
-				mips[mip] = b.textures.emplace(
-				    vk::TextureHot{.image = natives.image, .storage_view = natives.mip_views[mip]});
+				if (reuse != nullptr && !reuse->mip_storage[mip].is_null())
+				{
+					mips[mip] = reuse->mip_storage[mip];
+					continue;
+				}
+
+				mips[mip] = b.textures.emplace();
 				full |= mips[mip].is_null();
 			}
 
@@ -278,7 +289,10 @@ namespace ember::gpu
 			{
 				for (u32 mip = 1; mip < MAX_MIP_LEVELS; ++mip)
 				{
-					(void)b.textures.erase(mips[mip]);
+					if (reuse == nullptr || mips[mip] != reuse->mip_storage[mip])
+					{
+						(void)b.textures.erase(mips[mip]);
+					}
 					mips[mip] = {};
 				}
 			}
@@ -300,7 +314,6 @@ namespace ember::gpu
 			cold = vk::TextureCold{};
 			cold.allocation = natives.allocation;
 			cold.extent = {def.extent.width, def.extent.height, def.extent.depth};
-			cold.format = vk::to_vk(def.format);
 			cold.api_format = def.format;
 			cold.type = def.type;
 			cold.usage = def.usage;
@@ -309,53 +322,59 @@ namespace ember::gpu
 			cold.attachment_views = natives.attachment_views;
 			cold.attachment_view_count = natives.attachment_view_count;
 
-			// Storage descriptors use GENERAL. Sampled descriptors share that layout when the
-			// texture also supports storage; otherwise they expect SHADER_READ_ONLY_OPTIMAL.
-			// This records the expected layout without transitioning the new image.
-			const bool sampled = has_any(def.usage, TextureUsage::Sampled);
-			const bool storage = has_any(def.usage, TextureUsage::Storage);
-			cold.read_layout =
-			    storage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-			if (sampled)
+			// The descriptors name the layout the texture rests in for shaders; nothing transitions
+			// the new image here.
+			if (has_any(def.usage, TextureUsage::Sampled))
 			{
-				vk::heap_write_sampled(b, handle.index(), natives.view, cold.read_layout, def.type);
+				vk::heap_write_sampled(b, handle.index(), natives.view,
+				    vk::read_layout_of(def.usage), def.type);
 			}
-			if (storage)
+			if (has_any(def.usage, TextureUsage::Storage))
 			{
 				vk::heap_write_storage(b, handle.index(), natives.storage_view, def.type);
 			}
 
+			// Hidden entries are storage views of one mip each, whether newly claimed or kept from
+			// the texture being replaced.
 			for (u32 mip = 1; mip < def.mip_count; ++mip)
 			{
 				cold.mip_storage[mip] = mips[mip];
 				if (!mips[mip].is_null())
 				{
+					*b.textures.get(mips[mip]) = vk::TextureHot{.image = natives.image,
+					    .storage_view = natives.mip_views[mip]};
+
 					vk::TextureCold& entry = b.texture_cold[mips[mip].index()];
 					entry = vk::TextureCold{};
 					entry.extent = cold.extent;
-					entry.format = cold.format;
 					entry.api_format = def.format;
 					entry.type = def.type;
-					entry.read_layout = VK_IMAGE_LAYOUT_GENERAL;
+					entry.usage = TextureUsage::Storage;
 					entry.parent = handle;
 					vk::heap_write_storage(b, mips[mip].index(), natives.mip_views[mip], def.type);
 				}
 			}
 		}
 
-		// Retire the entry's natives and hidden mip entries into the graveyard, leaving the entry
-		// itself for its owner to reuse or release. The caller holds resources_lock.
-		void retire_natives(vk::Backend& b, const vk::TextureHot& hot, const vk::TextureCold& cold)
+		// Retire the entry's natives into the graveyard, leaving the entry itself for its owner to
+		// reuse or release. Hidden mip entries below kept_mips keep their slots for a replacement
+		// to refill, though their views retire too; the rest retire whole. The caller holds
+		// resources_lock.
+		void retire_natives(vk::Backend& b, const vk::TextureHot& hot, const vk::TextureCold& cold,
+		    u32 kept_mips)
 		{
-			for (const TextureHandle entry : cold.mip_storage)
+			for (u32 mip = 1; mip < MAX_MIP_LEVELS; ++mip)
 			{
-				if (const vk::TextureHot* mip = b.textures.get(entry))
+				const TextureHandle entry = cold.mip_storage[mip];
+				if (const vk::TextureHot* hidden = b.textures.get(entry))
 				{
 					vk::bury(b,
-					    {.kind = vk::Dead::Kind::ImageView, .handle = (u64)mip->storage_view});
-					(void)b.textures.retire(entry);
-					vk::bury(b, {.kind = vk::Dead::Kind::TextureSlot, .handle = entry.index()});
+					    {.kind = vk::Dead::Kind::ImageView, .handle = (u64)hidden->storage_view});
+					if (mip >= kept_mips)
+					{
+						(void)b.textures.retire(entry);
+						vk::bury(b, {.kind = vk::Dead::Kind::TextureSlot, .handle = entry.index()});
+					}
 				}
 			}
 
@@ -379,6 +398,12 @@ namespace ember::gpu
 
 	namespace vk
 	{
+		VkImageLayout read_layout_of(TextureUsage usage)
+		{
+			return has_any(usage, TextureUsage::Storage) ? VK_IMAGE_LAYOUT_GENERAL
+			                                             : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		}
+
 		TextureState uploaded_state(TextureUsage usage)
 		{
 			if (has_any(usage, TextureUsage::Sampled | TextureUsage::Storage))
@@ -410,7 +435,6 @@ namespace ember::gpu
 				TextureCold& cold = b.texture_cold[handle.index()];
 				cold = TextureCold{};
 				cold.extent = {extent.width, extent.height, 1};
-				cold.format = to_vk(format);
 				cold.api_format = format;
 				cold.usage = usage;
 				cold.swapchain = swapchain;
@@ -463,7 +487,7 @@ namespace ember::gpu
 		TextureHandle handle;
 
 		b->resources_lock.lock();
-		if (claim_mips(*b, def, natives, mips))
+		if (claim_mips(*b, def, natives, nullptr, mips))
 		{
 			handle = b->textures.emplace();
 			if (handle.is_null())
@@ -537,17 +561,18 @@ namespace ember::gpu
 		EMBER_ASSERT_MSG(!vk::any_frame_open(*b), "replace() with a new shape needs no frame open");
 		vk::wait_frames(*b);
 
-		// Claim the new mip entries before retiring anything, so a full pool leaves the old
-		// texture whole. The old descriptors are reset first, since the new type or usage may
-		// cover different bindings.
+		// Keep the hidden mip entries the new texture can refill and claim any further ones before
+		// retiring anything, so a full pool leaves the old texture whole. The old descriptors are
+		// reset first, since the new type or usage may cover different bindings.
+		const u32 kept_mips = has_any(def.usage, TextureUsage::Storage) ? def.mip_count : 1;
 		TextureHandle mips[MAX_MIP_LEVELS] = {};
 
 		b->resources_lock.lock();
-		const bool claimed = claim_mips(*b, def, natives, mips);
+		const bool claimed = claim_mips(*b, def, natives, &cold, mips);
 		if (claimed)
 		{
 			vk::heap_reset_texture(*b, handle.index(), cold.type);
-			retire_natives(*b, *hot, cold);
+			retire_natives(*b, *hot, cold, kept_mips);
 			publish(*b, handle, def, natives, mips);
 		}
 		b->resources_lock.unlock();
@@ -593,7 +618,7 @@ namespace ember::gpu
 
 		// Invalidate the handle without recycling its index yet. Shaders only carry that index,
 		// so the graveyard must wait for old users before another texture can claim it.
-		retire_natives(*b, *hot, cold);
+		retire_natives(*b, *hot, cold, 1);
 		(void)b->textures.retire(handle);
 		vk::bury(*b, {.kind = vk::Dead::Kind::TextureSlot, .handle = handle.index()});
 

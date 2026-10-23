@@ -155,27 +155,26 @@ namespace ember::gpu
 
 		u32 zone_query(const vk::Backend& b, const CommandList& list, u32 zone)
 		{
-			return ((list.slot * (b.ctx.max_lists + 1)) + list.index) * vk::MAX_ZONES * 2 +
+			return ((list.slot * (b.ctx.list_total + 1)) + list.index) * vk::MAX_ZONES * 2 +
 			       zone * 2;
 		}
 
 		// Vulkan keeps graphics and compute descriptor bindings separately. Bind the latest
-		// constant offsets once for each bind point that uses them.
-		void flush_constants(const vk::Backend& b, CommandList* list,
-		    VkPipelineBindPoint bind_point, bool& dirty)
+		// constant offsets for one bind point and clear its dirty flag. Kept out of line so a draw
+		// whose constants are unchanged is three checks and a tail call into Vulkan, with no
+		// register spills for this path.
+		EMBER_NOINLINE void flush_constants(CommandList* list, VkPipelineBindPoint bind_point,
+		    bool& dirty)
 		{
-			if (!dirty)
-			{
-				return;
-			}
-
+			const vk::Backend& b = *vk::backend();
 			vkCmdBindDescriptorSets(list->commands, bind_point, b.heap.pipeline_layout, 1, 1,
 			    &b.heap.constants, CONSTANT_SLOTS, list->constant_offsets);
 			dirty = false;
 		}
 
 		// Every draw needs these recording checks and the latest constant bindings. The pass and
-		// pipeline checks are assertions, so callers must satisfy them in every build.
+		// pipeline checks are assertions, so callers must satisfy them in every build. Only a
+		// changed constant slot costs the backend lookup; the clean path goes straight to the draw.
 		bool draw_ready(CommandList* list)
 		{
 			if (!recording(list))
@@ -185,8 +184,11 @@ namespace ember::gpu
 
 			EMBER_ASSERT_MSG(list->inside_pass, "draws record inside a render pass");
 			EMBER_ASSERT_MSG(!list->graphics_pipeline.is_null(), "a draw with no pipeline bound");
-			flush_constants(*vk::backend(), list, VK_PIPELINE_BIND_POINT_GRAPHICS,
-			    list->constants_dirty_graphics);
+			if (list->constants_dirty_graphics)
+			{
+				flush_constants(list, VK_PIPELINE_BIND_POINT_GRAPHICS,
+				    list->constants_dirty_graphics);
+			}
 			return true;
 		}
 
@@ -201,8 +203,11 @@ namespace ember::gpu
 			EMBER_ASSERT_MSG(list->queue != Queue::Transfer, "a dispatch on the transfer queue");
 			EMBER_ASSERT_MSG(!list->compute_pipeline.is_null(),
 			    "a dispatch with no pipeline bound");
-			flush_constants(*vk::backend(), list, VK_PIPELINE_BIND_POINT_COMPUTE,
-			    list->constants_dirty_compute);
+			if (list->constants_dirty_compute)
+			{
+				flush_constants(list, VK_PIPELINE_BIND_POINT_COMPUTE,
+				    list->constants_dirty_compute);
+			}
 			return true;
 		}
 
@@ -230,11 +235,11 @@ namespace ember::gpu
 		{
 			switch (state)
 			{
-				// Discarding contents leaves no old accesses to make visible. Use color output as
-				// the source stage for the backbuffer's usual first transition.
+				// Discarding contents leaves no old accesses to make visible and nothing to wait
+				// for, on any queue. An image whose last use was a read names that state instead,
+				// so the new writes are ordered after it; a backbuffer's acquire wait covers it.
 				case TextureState::Undefined:
-					return {VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_NONE,
-					    VK_IMAGE_LAYOUT_UNDEFINED};
+					return {VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_UNDEFINED};
 				case TextureState::ColorTarget:
 					return {VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 					    VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
@@ -275,7 +280,7 @@ namespace ember::gpu
 		VkImageLayout layout_of(const TextureCold& cold, TextureState state)
 		{
 			return state == TextureState::ShaderRead
-			           ? cold.read_layout
+			           ? read_layout_of(cold.usage)
 			           : state_info(state, VK_PIPELINE_STAGE_2_NONE).layout;
 		}
 

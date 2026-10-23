@@ -159,8 +159,11 @@ namespace ember::gpu
 					return false;
 				}
 				break;
+			// Rasterizing into a volume would need slice views and a 2D-compatible image.
+			// Compute and copies write volumes instead.
 			case TextureType::Texture3D:
-				if (def.layers != 1)
+				if (def.layers != 1 ||
+				    has_any(def.usage, TextureUsage::ColorTarget | TextureUsage::DepthTarget))
 				{
 					return false;
 				}

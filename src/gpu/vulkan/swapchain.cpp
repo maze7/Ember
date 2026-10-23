@@ -566,12 +566,16 @@ namespace ember::gpu
 			queue.lock.unlock();
 			note_result(b, result);
 
-			// The request is enqueued even for a swapchain that reports itself out of date, so
-			// its fence is armed either way. Defer rebuilding until acquire(), which can choose
-			// the new extent and image generation.
+			// A request the presentation engine rejected as out of date or surface lost is still
+			// enqueued, so its fence will signal. A request the call itself could not queue, out
+			// of memory or a lost device, leaves the fence untouched and must not be waited for.
+			// Defer rebuilding until acquire(), which can choose the new extent and generation.
+			const bool enqueued = result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR ||
+			                      result == VK_ERROR_OUT_OF_DATE_KHR ||
+			                      result == VK_ERROR_SURFACE_LOST_KHR;
 			for (u32 i = 0; i < count; ++i)
 			{
-				datas[i]->present_pending[images[i]] = b.ctx.present_fences;
+				datas[i]->present_pending[images[i]] = b.ctx.present_fences && enqueued;
 				if (results[i] == VK_ERROR_OUT_OF_DATE_KHR || results[i] == VK_SUBOPTIMAL_KHR)
 				{
 					datas[i]->needs_recreate = true;

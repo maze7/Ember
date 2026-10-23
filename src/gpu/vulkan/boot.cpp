@@ -1059,38 +1059,33 @@ namespace ember::gpu
 			EMBER_ASSERT(limits.maxBoundDescriptorSets >= 2);
 		}
 
-		// Give the list a pool and buffer for each of the first [queues] native queues, so it can
-		// record for whichever of them begin_command_list() names. Its slot and index were set
-		// when it was constructed.
-		bool create_list(vk::Backend& b, CommandList& list, u32 queues)
+		// Give the list a pool made for the family that will execute it and one primary buffer.
+		// Its queue, slot and index were set when it was constructed.
+		bool create_list(vk::Backend& b, CommandList& list, u32 family)
 		{
-			for (u32 q = 0; q < queues; ++q)
+			const VkCommandPoolCreateInfo pool_info{
+			    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			    .queueFamilyIndex = family,
+			};
+
+			if (vkCreateCommandPool(b.ctx.device, &pool_info, &b.ctx.callbacks, &list.pool) !=
+			    VK_SUCCESS)
 			{
-				const VkCommandPoolCreateInfo pool_info{
-				    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-				    .queueFamilyIndex = b.ctx.queues[q].family,
-				};
+				EMBER_ERROR("vulkan: command pool creation failed");
+				return false;
+			}
 
-				if (vkCreateCommandPool(b.ctx.device, &pool_info, &b.ctx.callbacks,
-				        &list.pools[q]) != VK_SUCCESS)
-				{
-					EMBER_ERROR("vulkan: command pool creation failed");
-					return false;
-				}
+			const VkCommandBufferAllocateInfo buffer_info{
+			    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			    .commandPool = list.pool,
+			    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			    .commandBufferCount = 1,
+			};
 
-				const VkCommandBufferAllocateInfo buffer_info{
-				    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-				    .commandPool = list.pools[q],
-				    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-				    .commandBufferCount = 1,
-				};
-
-				if (vkAllocateCommandBuffers(b.ctx.device, &buffer_info, &list.buffers[q]) !=
-				    VK_SUCCESS)
-				{
-					EMBER_ERROR("vulkan: command buffer allocation failed");
-					return false;
-				}
+			if (vkAllocateCommandBuffers(b.ctx.device, &buffer_info, &list.commands) != VK_SUCCESS)
+			{
+				EMBER_ERROR("vulkan: command buffer allocation failed");
+				return false;
 			}
 
 			return true;
@@ -1098,13 +1093,14 @@ namespace ember::gpu
 
 		// Reserve each frame slot's lists and query result storage at boot. Every slot and list is
 		// constructed before the first call that can fail, so a failed boot tears down only
-		// objects that exist. Each list then gets a private command pool per queue, and one query
-		// pool covers all slots when timestamps are available.
+		// objects that exist. Each queue's table holds its budget of lists, each with a private
+		// command pool for that queue's family, and one query pool covers all slots when
+		// timestamps are available.
 		bool create_slots(vk::Backend& b)
 		{
 			const u32 in_flight = b.ctx.in_flight;
-			const u32 max_lists = b.ctx.max_lists;
-			const u32 zone_capacity = (max_lists + 1) * vk::MAX_ZONES;
+			const u32 total = b.ctx.list_total;
+			const u32 zone_capacity = (total + 1) * vk::MAX_ZONES;
 
 			b.slots = (vk::Slot*)memory::allocate(memory::Tag::Graphics,
 			    sizeof(vk::Slot) * in_flight, alignof(vk::Slot));
@@ -1113,14 +1109,26 @@ namespace ember::gpu
 			{
 				vk::Slot& slot = *::new ((void*)(b.slots + s)) vk::Slot();
 
-				slot.lists = (CommandList*)memory::allocate(memory::Tag::Graphics,
-				    sizeof(CommandList) * max_lists, alignof(CommandList));
-				for (u32 i = 0; i < max_lists; ++i)
+				u32 index = 0;
+				for (u32 q = 0; q < vk::QUEUE_COUNT; ++q)
 				{
-					::new ((void*)(slot.lists + i)) CommandList{.slot = s, .index = i};
+					const u32 capacity = b.ctx.list_capacity[q];
+					if (capacity == 0)
+					{
+						continue;
+					}
+
+					slot.lists[q] = (CommandList*)memory::allocate(memory::Tag::Graphics,
+					    sizeof(CommandList) * capacity, alignof(CommandList));
+					for (u32 i = 0; i < capacity; ++i)
+					{
+						::new ((void*)(slot.lists[q] + i))
+						    CommandList{.queue = (Queue)q, .slot = s, .index = index + i};
+					}
+					index += capacity;
 				}
 
-				slot.finish = CommandList{.slot = s, .index = max_lists};
+				slot.finish = CommandList{.queue = Queue::Graphics, .slot = s, .index = total};
 				slot.zones = (ZoneTiming*)memory::allocate_zeroed(memory::Tag::Graphics,
 				    sizeof(ZoneTiming) * zone_capacity, alignof(ZoneTiming));
 			}
@@ -1129,16 +1137,20 @@ namespace ember::gpu
 			{
 				vk::Slot& slot = b.slots[s];
 
-				for (u32 i = 0; i < max_lists; ++i)
+				for (u32 q = 0; q < vk::QUEUE_COUNT; ++q)
 				{
-					if (!create_list(b, slot.lists[i], b.ctx.queue_count))
+					const u32 family = vk::queue_for(b, (Queue)q).family;
+					for (u32 i = 0; i < b.ctx.list_capacity[q]; ++i)
 					{
-						return false;
+						if (!create_list(b, slot.lists[q][i], family))
+						{
+							return false;
+						}
 					}
 				}
 
 				// The finish list and the upload batches only ever go to the graphics queue.
-				if (!create_list(b, slot.finish, 1))
+				if (!create_list(b, slot.finish, b.ctx.queues[0].family))
 				{
 					return false;
 				}
@@ -1205,19 +1217,16 @@ namespace ember::gpu
 			{
 				vk::Slot& slot = b.slots[s];
 
-				for (u32 i = 0; i < b.ctx.max_lists; ++i)
+				for (u32 q = 0; q < vk::QUEUE_COUNT; ++q)
 				{
-					for (const VkCommandPool pool : slot.lists[i].pools)
+					for (u32 i = 0; i < b.ctx.list_capacity[q]; ++i)
 					{
-						vkDestroyCommandPool(b.ctx.device, pool, &b.ctx.callbacks);
+						vkDestroyCommandPool(b.ctx.device, slot.lists[q][i].pool, &b.ctx.callbacks);
 					}
+					memory::free(slot.lists[q]);
 				}
-				memory::free(slot.lists);
 
-				for (const VkCommandPool pool : slot.finish.pools)
-				{
-					vkDestroyCommandPool(b.ctx.device, pool, &b.ctx.callbacks);
-				}
+				vkDestroyCommandPool(b.ctx.device, slot.finish.pool, &b.ctx.callbacks);
 				vkDestroyCommandPool(b.ctx.device, slot.upload_pool, &b.ctx.callbacks);
 				memory::free(slot.zones);
 				slot.~Slot();
@@ -1315,9 +1324,17 @@ namespace ember::gpu
 			    Pool<PipelineData, ComputePipeline>::MAX_CAPACITY, "max_compute_pipelines");
 			limits.max_swapchains =
 			    clamp_limit(limits.max_swapchains, 1, MAX_SWAPCHAINS, "max_swapchains");
-			limits.max_command_lists =
-			    clamp_limit(limits.max_command_lists, 1, 256, "max_command_lists");
-			ctx.max_lists = limits.max_command_lists;
+			limits.max_graphics_lists =
+			    clamp_limit(limits.max_graphics_lists, 1, 256, "max_graphics_lists");
+			limits.max_compute_lists =
+			    clamp_limit(limits.max_compute_lists, 0, 256, "max_compute_lists");
+			limits.max_transfer_lists =
+			    clamp_limit(limits.max_transfer_lists, 0, 256, "max_transfer_lists");
+			ctx.list_capacity[(u32)Queue::Graphics] = limits.max_graphics_lists;
+			ctx.list_capacity[(u32)Queue::Compute] = limits.max_compute_lists;
+			ctx.list_capacity[(u32)Queue::Transfer] = limits.max_transfer_lists;
+			ctx.list_total =
+			    limits.max_graphics_lists + limits.max_compute_lists + limits.max_transfer_lists;
 			ctx.max_swapchains = limits.max_swapchains;
 
 			memory::Allocator* heap = memory::heap();

@@ -40,21 +40,18 @@ namespace ember::gpu
 		inline constexpr u32 MAX_SWAPCHAINS = 8;
 	}
 
-	// One recording writer owns the command buffer, its private pools, and cached binding state
+	// One recording writer owns the command buffer, its private pool, and cached binding state
 	// between begin_command_list() and end_command_list(). The slot keeps them for reuse.
 	struct CommandList
 	{
-		// The buffer recording now: the entry of buffers[] for the queue begin_command_list()
-		// named, which is the only queue the list may be submitted to.
+		// The pool is made at boot for the queue's family, so the list records for that queue
+		// only, which is also the only queue it may be submitted to.
+		VkCommandPool pool = VK_NULL_HANDLE;
 		VkCommandBuffer commands = VK_NULL_HANDLE;
 		Queue queue = Queue::Graphics;
 
-		// A pool and primary buffer for each distinct native queue, indexed like Context::queues,
-		// because a buffer may only go to a queue of the family its pool was made for.
-		VkCommandPool pools[vk::QUEUE_COUNT] = {};
-		VkCommandBuffer buffers[vk::QUEUE_COUNT] = {};
-
-		// Together these locate the list's timestamp queries as well as its frame slot.
+		// Together these locate the list's timestamp queries as well as its frame slot. The
+		// index is unique across the slot's queue tables, with the finish list last.
 		u32 slot = 0;
 		u32 index = 0;
 
@@ -174,7 +171,12 @@ namespace ember::gpu::vk
 		VkPipelineStageFlags2 all_shader_stages = 0;
 
 		u32 in_flight = 0;
-		u32 max_lists = 0;
+
+		// Lists per frame slot for each logical queue, from GpuLimits, and their sum. Query ranges
+		// go by slot, then by list index across the queue tables, then the finish list.
+		u32 list_capacity[QUEUE_COUNT] = {};
+		u32 list_total = 0;
+
 		u32 max_swapchains = 0;
 		bool debug_utils = false;
 		bool headless = false;
@@ -198,19 +200,14 @@ namespace ember::gpu::vk
 	{
 		VmaAllocation allocation = VK_NULL_HANDLE;
 		VkExtent3D extent = {};
-		VkFormat format = VK_FORMAT_UNDEFINED;
 		TextureFormat api_format = TextureFormat::Undefined;
 		TextureType type = TextureType::Texture2D;
 		u32 mip_count = 1;
 		u32 layer_count = 1;
 
-		// The usage the texture was created with. Barriers check it, and an upload chooses the
-		// state it leaves the texture in by it.
+		// The usage the texture was created with. Barriers check it, an upload chooses the state
+		// it leaves the texture in by it, and read_layout_of() derives the sampled layout from it.
 		TextureUsage usage = TextureUsage::None;
-
-		// ShaderRead must agree with the sampled descriptor's layout. Storage-capable textures use
-		// GENERAL for both; other textures use SHADER_READ_ONLY_OPTIMAL.
-		VkImageLayout read_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 		// A non-null owner marks a backbuffer. The swapchain owns its image, and barriers update
 		// the acquired image's tracked state through this link.
@@ -341,27 +338,26 @@ namespace ember::gpu::vk
 		TextureState state = TextureState::Undefined;
 	};
 
-	// Where a frame slot is in its life. begin_frame() makes it Open after waiting out Closed and
-	// Finishing; end_frame() makes it Closed once its queue values are written. Whoever sees the
-	// values pass claims Finishing alone, resolves the zones, ends Stage::Gpu and publishes
-	// Complete, and a waiter that lost the claim spins until it sees Complete, so nothing reuses
-	// the slot under the finisher. Idle is a slot no frame has used yet.
+	// Where a frame slot is in its life. begin_frame() makes it Open after waiting out a Closed
+	// frame; end_frame() makes it Closed once its queue values are written; the frame loop's
+	// fiber alone turns Closed into Complete, once the values have passed, after resolving the
+	// zones and ending Stage::Gpu. Other threads only read the state, so no one can claim or
+	// reuse a slot under its finisher. Idle is a slot no frame has used yet.
 	enum class SlotState : u8
 	{
 		Idle,
 		Open,
 		Closed,
-		Finishing,
 		Complete,
 	};
 
 	// Storage reused by successive frames once their GPU work has completed.
 	struct Slot
 	{
-		// begin_command_list() claims these in order. Each has a private command pool so recording
-		// jobs do not share a pool.
-		CommandList* lists = nullptr;
-		std::atomic<u32> opened{0};
+		// begin_command_list() claims these in order within the queue's table. Each list has a
+		// private command pool so recording jobs do not share one.
+		CommandList* lists[QUEUE_COUNT] = {};
+		std::atomic<u32> opened[QUEUE_COUNT] = {};
 
 		// end_frame() uses this list to prepare acquired images for presentation.
 		CommandList finish;
@@ -384,15 +380,17 @@ namespace ember::gpu::vk
 		VkSemaphore acquire_waits[MAX_SWAPCHAINS] = {};
 		u32 acquire_wait_count = 0;
 
-		// Serialize upload recording from any thread. The next graphics submit places the current
-		// batch before its caller's command lists.
+		// Serialize upload recording from any thread. submit_uploads() and end_frame() close and
+		// submit the open batch under the graphics queue lock, and upload_value, kept under that
+		// same lock, is the latest point covering every batch submitted so far.
 		SpinMutex upload_lock;
 		VkCommandPool upload_pool = VK_NULL_HANDLE;
 		VkCommandBuffer upload_batches[MAX_UPLOAD_BATCHES] = {};
 		u32 upload_batch = 0;
 		bool upload_open = false;
+		u64 upload_value = 0;
 
-		// Space for (max_lists + 1) * MAX_ZONES results, including end_frame()'s private list.
+		// Space for (list_total + 1) * MAX_ZONES results, including end_frame()'s private list.
 		ZoneTiming* zones = nullptr;
 		u32 zone_count = 0;
 	};
@@ -492,9 +490,12 @@ namespace ember::gpu::vk
 		Ring transient;
 		Ring staging;
 
-		// Ring space reserved by the last frame that ended, including unused worker chunk space.
+		// Ring space reserved by the last frame that ended, including unused worker chunk space,
+		// and the most any frame has reserved, for sizing the budgets.
 		u64 last_transient_used = 0;
 		u64 last_staging_used = 0;
+		u64 peak_transient_used = 0;
+		u64 peak_staging_used = 0;
 
 		// Protected by resources_lock. The prefix before graveyard_head has already been released.
 		Vector<Dead> graveyard{memory::Tag::Graphics};
@@ -521,16 +522,19 @@ namespace ember::gpu::vk
 	Slot& slot_of(Backend& backend, u64 frame_index);
 	void raise_completed(QueueState& queue, u64 value);
 
-	// Poll each queue's timeline, then resolve closed frames whose submission values have passed
-	// and end their Stage::Gpu.
-	void poll(Backend& backend);
+	// Read each queue's timeline into its completed counter. Any thread.
+	void poll_queues(Backend& backend);
+
+	// Complete the closed frames whose submission values have passed: resolve their zones and
+	// end their Stage::Gpu. Only the frame loop's fiber, which owns frame completion.
+	void finish_frames(Backend& backend);
 
 	// True while any frame is open. A frame's lists could be using descriptors, so replace()
 	// swaps them only when this is false.
 	bool any_frame_open(const Backend& backend);
 
 	// Wait out every frame in flight, after which nothing is pending on any queue. Parks the
-	// caller like wait_frame(). Only legal with no frame open.
+	// caller like wait_frame(). Only legal with no frame open, on the frame loop's fiber.
 	void wait_frames(Backend& backend);
 
 	// Any thread may wait for a timeline value. Completed values return immediately; pending ones
@@ -573,6 +577,10 @@ namespace ember::gpu::vk
 	};
 
 	StateInfo state_info(TextureState state, VkPipelineStageFlags2 shader_stages);
+
+	// The layout a texture's sampled descriptors name: GENERAL for a storage-capable texture, so
+	// one layout serves both kinds of descriptor, and the read-only layout otherwise.
+	VkImageLayout read_layout_of(TextureUsage usage);
 
 	// The image layout a state means for one texture. ShaderRead follows the layout written in
 	// the texture's descriptors; every other state has a single layout.
@@ -623,7 +631,8 @@ namespace ember::gpu::vk
 	RingSpan ring_allocate(Ring& ring, u32 slot, u64 size, u64 alignment);
 	u64 ring_used(const Ring& ring, u32 slot);
 
-	// Close the open upload batch and return it to precede the submit's lists, or null if empty.
-	// This helper takes upload_lock itself.
+	// Close the open upload batch and return it for submission, or null if empty. The caller
+	// holds the graphics queue lock, so the batch it closes is submitted before anything that
+	// reaches the queue later; this helper takes upload_lock itself.
 	VkCommandBuffer flush_uploads(Slot& slot);
 }

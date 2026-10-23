@@ -5,8 +5,8 @@
 //
 // The transient buffer has a pool handle and storage descriptor for shader access. The staging
 // buffer stays private: upload() copies CPU data into it and records a transfer into the target.
-// The next graphics submit carries those transfers before its command lists; end_frame() also
-// submits any uploads left over.
+// submit_uploads() sends the recorded transfers to the graphics queue, and end_frame() sends
+// whatever is left.
 
 #include <ember/gpu/gpu.h>
 #include <ember/math/scalar.h>
@@ -121,8 +121,8 @@ namespace ember::gpu
 		}
 
 		// Open another batch only when needed. Its first barrier orders transfer writes after
-		// earlier accesses on the graphics queue. Other queues need explicit synchronization.
-		// The caller holds upload_lock while recording into the shared batch.
+		// earlier accesses on the graphics queue; other queues need the submission's point. The
+		// caller holds upload_lock while recording into the shared batch.
 		VkCommandBuffer open_upload_batch(vk::Slot& slot)
 		{
 			if (slot.upload_open)
