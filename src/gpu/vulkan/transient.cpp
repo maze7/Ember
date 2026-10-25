@@ -1,12 +1,7 @@
-// Transient data and upload staging each use one mapped buffer split by frame slot. Workers
-// reserve chunks through a shared counter, then allocate within their own chunk using plain
-// stores. Threads outside the scheduler reserve directly from the counter. A slot resets only
-// after its previous frame has completed, so GPU reads can outlive the allocating jobs.
-//
-// The transient buffer has a pool handle and storage descriptor for shader access. The staging
-// buffer stays private: upload() copies CPU data into it and records a transfer into the target.
-// submit() sends the recorded transfers ahead of its lists, submit_uploads() sends them on their
-// own, and end_frame() sends whatever is left.
+// Transient and staging buffers are divided by frame slot and reset after GPU completion.
+// Workers reserve chunks, then use private cursors; external threads reserve directly.
+// The transient buffer is shader-visible. Staging stays private and retains CPU copies until
+// their upload batches run on the graphics queue.
 
 #include <ember/gpu/gpu.h>
 #include <ember/math/scalar.h>
@@ -23,19 +18,14 @@ namespace ember::gpu
 {
 	namespace
 	{
-		// Refill in chunks to amortize contention on the shared counter. Unused chunk tails
-		// remain charged to the frame. Chunk and slice bases need to satisfy the requested
-		// alignment; 256 covers the supported power-of-two alignments.
+		// Chunk refills amortize shared-counter contention but charge unused tails to the frame.
+		// Bases align to 256 to satisfy every supported power-of-two alignment.
 		constexpr u64 CHUNK_BYTES = 64_kb;
 		constexpr u64 CHUNK_ALIGNMENT = 256;
 
-		// Staging copies start on sixteen bytes: a multiple of every texel block size in
-		// TextureFormat and of the four bytes a buffer copy needs, so the ring's power-of-two
-		// path serves every upload.
+		// Sixteen is a multiple of every format's texel block size and the buffer-copy alignment.
 		constexpr u64 STAGING_ALIGNMENT = 16;
 
-		// Allocate one cursor per worker in every frame slot. The buffer already exists, and
-		// these arrays stay fixed until shutdown.
 		void init_slices(vk::Backend& b, vk::Ring& ring)
 		{
 			ring.worker_count = jobs::worker_count();
@@ -110,8 +100,7 @@ namespace ember::gpu
 				memory::free(ring.slices);
 			}
 
-			// A pool-backed ring gives ownership of its Vulkan buffer and allocation to that entry.
-			// Only the private staging ring needs to destroy its buffer here.
+			// The transient ring's pool entry owns its storage; only staging releases it here.
 			if (ring.handle.is_null())
 			{
 				vmaDestroyBuffer(b.ctx.allocator, ring.buffer, ring.allocation);
@@ -120,9 +109,8 @@ namespace ember::gpu
 			ring = vk::Ring{};
 		}
 
-		// Open another batch only when needed. Its first barrier orders transfer writes after
-		// earlier accesses on the graphics queue; other queues need the submission's point. The
-		// caller holds upload_lock while recording into the shared batch.
+		// Hold upload_lock. The first barrier orders writes after earlier graphics accesses;
+		// independent queues need explicit dependencies.
 		VkCommandBuffer open_upload_batch(vk::Slot& slot)
 		{
 			if (slot.upload_open)
@@ -176,8 +164,7 @@ namespace ember::gpu
 				return false;
 			}
 
-			// Create this buffer directly because constants need uniform-buffer usage, which the
-			// public BufferDef does not expose. Other transient uses share the same allocation.
+			// Constants require uniform-buffer usage, which public BufferDef does not expose.
 			const BufferSharing sharing = buffer_sharing(b.ctx);
 			const VkBufferCreateInfo info{
 			    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -190,8 +177,7 @@ namespace ember::gpu
 			    .pQueueFamilyIndices = sharing.families,
 			};
 
-			// Prefer device-local memory for GPU reads, while requiring a coherent CPU mapping.
-			// VMA may choose host memory when a suitable device-local memory type is unavailable.
+			// Coherent mapping is required; device-local placement is only preferred.
 			VmaAllocationCreateInfo allocation_info = {};
 			allocation_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
 			                        VMA_ALLOCATION_CREATE_MAPPED_BIT;
@@ -208,8 +194,7 @@ namespace ember::gpu
 				return false;
 			}
 
-			// Give the transient buffer a normal pool handle and storage descriptor so commands
-			// and shaders can refer to its allocations through the usual buffer interface.
+			// A pool handle exposes transient allocations through the shader buffer interface.
 			b.resources_lock.lock();
 			ring.handle = b.buffers.emplace(BufferHot{.buffer = ring.buffer});
 			if (!ring.handle.is_null())
@@ -311,8 +296,7 @@ namespace ember::gpu
 				return {ring.cpu + start, start};
 			}
 
-			// An external thread has no private cursor. Reserve its request directly from the
-			// shared counter, rounded to the chunk alignment rather than a full worker chunk.
+			// External threads have no private cursor, so reserve only this request plus alignment.
 			const u64 chunk = align_up(size, CHUNK_ALIGNMENT);
 			const u64 base = slice.next.fetch_add(chunk, std::memory_order_relaxed);
 			if (base + chunk > slice_end)
@@ -516,10 +500,8 @@ namespace ember::gpu
 			return false;
 		}
 
-		// Replace the whole subresource, so its previous contents can be discarded. Finish in
-		// the state the texture rests in by its usage, which is the layout its descriptors expect
-		// where a shader can read it. Earlier uses on other queues must have been synchronized
-		// separately; these barriers only cover the graphics queue.
+		// Whole-subresource writes discard old contents and finish in the usage's expected layout.
+		// These barriers cover graphics only; order prior uses on other queues separately.
 		const VkImageSubresourceRange range{vk::aspect_of(cold.api_format), mip, 1, layer, 1};
 		const VkImageMemoryBarrier2 to_copy{
 		    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,

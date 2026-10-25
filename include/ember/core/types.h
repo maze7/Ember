@@ -1,13 +1,11 @@
 #pragma once
 
-// This header contains the type aliases used across the entire Ember codebase. Every other Ember
-// header includes it, so it must stay small and must not pull in anything heavy.
+// Shared scalar types and byte-size literals. Keep this header's dependencies small.
+
 #include <cstdint>
 
 namespace ember
 {
-	// Ember uses fixed-width integer types everywhere so that struct layouts and serialized data
-	// mean the same thing on every platform. The names are short because they are typed constantly.
 	using u8 = uint8_t;
 	using u16 = uint16_t;
 	using u32 = uint32_t;
@@ -21,8 +19,7 @@ namespace ember
 	using f32 = float;
 	using f64 = double;
 
-	// Byte sizes read better as units than as products of 1024. They are consteval so a size can
-	// only be spelled with a literal, which is the only place a unit belongs.
+	// Binary byte units, evaluated at compile time.
 	consteval u64 operator""_kb(unsigned long long value) noexcept
 	{
 		return static_cast<u64>(value) * 1024;

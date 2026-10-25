@@ -23,8 +23,7 @@ namespace ember::platform
 			words[index / 64] &= ~(u64(1) << (index % 64));
 		}
 
-		// Moves the level of every down button to released and clears it, for a device the
-		// desktop stopped reporting.
+		// Synthesize releases when focus or a device is lost, since no release events may follow.
 		void release_all(u64* down, u64* released, u32 words)
 		{
 			for (u32 word = 0; word < words; ++word)

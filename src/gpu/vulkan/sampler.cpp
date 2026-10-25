@@ -1,6 +1,5 @@
-// A sampler's pool index is its descriptor index. Keep both the Vulkan object and that slot
-// until the graveyard has finished with the frames that could still sample through them.
-// Replacement puts a new sampler behind an existing entry, keeping the handle and its index.
+// Sampler pool indices also address bindless descriptors. Retain the native sampler and its
+// slot until all frames that could sample through them finish.
 
 #include <ember/gpu/gpu.h>
 
@@ -52,13 +51,11 @@ namespace ember::gpu
 			return VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
 		}
 
-		// Build the Vulkan sampler for def, or null with the failure logged.
 		VkSampler create_native(vk::Backend& b, const SamplerDef& def)
 		{
 			const Caps& caps = b.ctx.caps;
 
-			// Min and max reduction are optional. When unsupported, leave the extension off the
-			// creation chain so the sampler uses weighted averaging, and report the fallback.
+			// Unsupported reduction modes fall back to weighted averaging with a warning.
 			VkSamplerReductionModeCreateInfo reduction{
 			    .sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO,
 			    .reductionMode = def.reduction == ReductionMode::Min
@@ -183,9 +180,7 @@ namespace ember::gpu
 			return false;
 		}
 
-		// A pending frame may be sampling through this entry's descriptor, which Vulkan forbids
-		// rewriting until it has completed. Between frames nothing is open, so waiting out the
-		// frames in flight leaves nothing pending.
+		// Stop recording and wait for descriptor users before rewriting this slot.
 		EMBER_ASSERT_MSG(!vk::any_frame_open(*b), "replace() of a sampler needs no frame open");
 		vk::wait_frames(*b);
 

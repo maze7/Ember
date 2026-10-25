@@ -1,10 +1,6 @@
-// Records public GPU commands into the command buffer owned by each list. Handle lookups take
-// no lock, and each list has one writer. Calls made outside recording assert in debug builds
-// and otherwise return.
-//
-// Pipeline and index-buffer binds compare against the list's current bindings so repeated
-// binds can be skipped. set_constants() copies the data now and leaves the descriptor bind
-// until the next draw or dispatch. Graphics and compute each flush their own pending offsets.
+// Each list has one writer and uses lock-free resource lookups. Redundant binds are skipped.
+// Constant offsets are bound lazily, separately for graphics and compute. Non-recording lists
+// assert in debug builds and otherwise return without recording.
 
 #include <ember/gpu/commands.h>
 
@@ -79,8 +75,6 @@ namespace ember::gpu
 			                            : VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		}
 
-		// Reuse the main view for a single subresource. Other attachments need the mip and layer
-		// views prepared when the texture was created.
 		VkImageView attachment_view(const vk::TextureHot& hot, const vk::TextureCold& cold, u32 mip,
 		    u32 layer)
 		{
@@ -108,8 +102,6 @@ namespace ember::gpu
 			};
 		}
 
-		// Remember the state a list leaves an acquired backbuffer in, one entry per swapchain. A
-		// later barrier on the same swapchain's image replaces the earlier entry.
 		void note_backbuffer(CommandList& list, SwapchainHandle swapchain, u32 image,
 		    TextureState state)
 		{
@@ -159,10 +151,8 @@ namespace ember::gpu
 			       zone * 2;
 		}
 
-		// Vulkan keeps graphics and compute descriptor bindings separately. Bind the latest
-		// constant offsets for one bind point and clear its dirty flag. Kept out of line so a draw
-		// whose constants are unchanged is three checks and a tail call into Vulkan, with no
-		// register spills for this path.
+		// Graphics and compute need separate descriptor binds. Keep this off the common draw
+		// path, which only needs to check whether offsets changed.
 		EMBER_NOINLINE void flush_constants(CommandList* list, VkPipelineBindPoint bind_point,
 		    bool& dirty)
 		{
@@ -172,9 +162,7 @@ namespace ember::gpu
 			dirty = false;
 		}
 
-		// Every draw needs these recording checks and the latest constant bindings. The pass and
-		// pipeline checks are assertions, so callers must satisfy them in every build. Only a
-		// changed constant slot costs the backend lookup; the clean path goes straight to the draw.
+		// Pass and pipeline checks are assertions, so callers must satisfy them in every build.
 		bool draw_ready(CommandList* list)
 		{
 			if (!recording(list))
@@ -211,8 +199,7 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Resolve the argument buffer once for the indirect commands. A stale handle logs and
-		// returns null, letting the caller skip the command.
+		// Stale argument buffers log and skip the indirect command.
 		VkBuffer indirect_buffer(const vk::Backend& b, BufferHandle handle, u64 offset)
 		{
 			const vk::BufferHot* hot = b.buffers.get(handle);
@@ -235,9 +222,9 @@ namespace ember::gpu
 		{
 			switch (state)
 			{
-				// Discarding contents leaves no old accesses to make visible and nothing to wait
-				// for, on any queue. An image whose last use was a read names that state instead,
-				// so the new writes are ordered after it; a backbuffer's acquire wait covers it.
+				// No source access is tracked here. Prior GPU use must already be ordered;
+				// discarding contents alone does not remove execution hazards. Acquired
+				// backbuffers are ordered by their acquire semaphore.
 				case TextureState::Undefined:
 					return {VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE, VK_IMAGE_LAYOUT_UNDEFINED};
 				case TextureState::ColorTarget:
@@ -352,10 +339,8 @@ namespace ember::gpu
 			                     has_any(cold.usage, TextureUsage::Sampled | TextureUsage::Storage),
 			    "ShaderRead on a texture no shader can read");
 
-			// An ownership transfer is two halves of one barrier: a release on the giving queue
-			// and an acquire on the taking one, with the same layouts. Queues of one family own
-			// nothing separately, so there the release half is an ordinary barrier and the
-			// acquire half records nothing.
+			// Different families need matching release/acquire barriers and a submission wait.
+			// Within one family, record the ordinary barrier only on the releasing queue.
 			const u32 from_family = vk::queue_for(b, barrier.from).family;
 			const u32 to_family = vk::queue_for(b, barrier.to).family;
 			const bool transfer = from_family != to_family;
@@ -371,8 +356,8 @@ namespace ember::gpu
 			src.layout = vk::layout_of(cold, barrier.before);
 			dst.layout = vk::layout_of(cold, barrier.after);
 
-			// The scope on the far side of a transfer does not apply, and it may name stages this
-			// queue lacks, so leave it empty: the submission wait between the halves orders them.
+			// The opposite scope may name unsupported stages. Leave it empty; the submission
+			// wait orders the transfer's two halves.
 			if (transfer && list->queue == barrier.from)
 			{
 				dst.stages = VK_PIPELINE_STAGE_2_NONE;
@@ -406,8 +391,7 @@ namespace ember::gpu
 			        },
 			};
 
-			// Remember the state this list leaves an acquired backbuffer in. submit() folds it
-			// into the frame's pending present in submission order; no shared state changes here.
+			// Defer shared backbuffer state updates until submit(), which knows execution order.
 			if (!cold.swapchain.is_null())
 			{
 				EMBER_ASSERT_MSG(list->queue == Queue::Graphics,
@@ -661,7 +645,6 @@ namespace ember::gpu
 		EMBER_ASSERT(size != 0 && size <= PUSH_CONSTANT_BYTES && size % 4 == 0);
 		EMBER_ASSERT_MSG(list->queue != Queue::Transfer, "push constants on the transfer queue");
 
-		// Every pipeline shares this layout, so push constants can be recorded before a bind.
 		vkCmdPushConstants(list->commands, vk::backend()->heap.pipeline_layout, VK_SHADER_STAGE_ALL,
 		    0, size, data);
 	}
@@ -1016,8 +999,7 @@ namespace ember::gpu
 			vkCmdBeginDebugUtilsLabelEXT(list->commands, &label);
 		}
 
-		// Keep debug labels and nesting after the timestamp slots run out, and on a queue whose
-		// family cannot write timestamps. Only timing is lost.
+		// Keep labels and nesting even without a timestamp slot or a timestamp-capable queue.
 		u8 claimed = vk::ZONE_UNTIMED;
 		if (b.timestamps != VK_NULL_HANDLE && vk::queue_for(b, list->queue).timestamps &&
 		    list->zone_count < vk::MAX_ZONES)

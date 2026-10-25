@@ -1,8 +1,7 @@
 #pragma once
 
-// An arena gives a group of allocations the same lifetime. Each thread keeps
-// a cursor into its own blocks. Most allocations just align and advance that
-// cursor; only a refill visits the shared block heap.
+// Allocations share a lifetime. Each thread advances a cursor through its own
+// blocks; only a refill visits the shared block heap.
 //
 // Individual allocations stay put until their tag is freed. end() leaves the
 // blocks in place so readers can finish before the caller returns them:
@@ -65,7 +64,8 @@ namespace ember::memory
 		Arena(const Arena&) = delete;
 		Arena& operator=(const Arena&) = delete;
 
-		// Chooses the block heap and diagnostic name. begin() starts the first lifetime.
+		// The block heap and diagnostic name must outlive the arena's use of them.
+		// Call begin() before allocating.
 		void initialize(BlockHeap* blocks, const char* name);
 
 		// Returns blocks still owned by the current tag, then detaches from the heap.
@@ -93,9 +93,8 @@ namespace ember::memory
 		// must look up that worker's slot rather than keep an earlier TLS lookup.
 		static EMBER_NOINLINE u32 thread_slot();
 
-		// Direct calls can inline the fast path; Allocator calls use the override below.
-		// A zero-byte request consumes one byte so it still gets a distinct live address.
-		// The active check is debug-only, and shipping builds omit tag accounting.
+		// Requires an active lifetime. A zero-byte request consumes one byte so it
+		// still gets a distinct live address. Shipping builds omit tag accounting.
 		[[nodiscard]] EMBER_FINLINE void* allocate(Tag tag, size_t size,
 		    size_t alignment = DEFAULT_ALIGNMENT)
 		{
@@ -109,9 +108,8 @@ namespace ember::memory
 			slot.bytes += bytes;
 			charge(slot, tag, bytes);
 
-			// Alignment may carry the cursor past the block, so check its position before
-			// subtracting pointers. Empty slots take this path too and acquire their first
-			// block on demand.
+			// Check the aligned cursor before subtracting: alignment can carry it past
+			// the block. An empty slot also needs a refill.
 			if (aligned >= slot.end || (size_t)(slot.end - aligned) < bytes) [[unlikely]]
 			{
 				return refill(slot, bytes, alignment);
@@ -121,8 +119,7 @@ namespace ember::memory
 			return aligned;
 		}
 
-		// Arena tracking records subsystem totals rather than allocation sites,
-		// so this implementation leaves the source location unused.
+		// Arena tracking records subsystem totals, not individual allocation sites.
 		void* allocate(Tag tag, size_t size, size_t alignment, std::source_location) override
 		{
 			return allocate(tag, size, alignment);

@@ -3,7 +3,7 @@
 // Compiler attributes and low-level checks shared across Ember. Keep dependencies minimal since
 // this header is included widely.
 
-// Exactly one compiler flag is 1. Test Clang first because clang-cl also defines _MSC_VER
+// Test Clang first because clang-cl also defines _MSC_VER.
 #if defined(__clang__)
 	#define EMBER_COMPILER_CLANG 1
 	#define EMBER_COMPILER_GCC 0
@@ -20,11 +20,9 @@
 	#error "Ember supports Clang, GCC and MSVC."
 #endif
 
-// EMBER_FINLINE asks the compiler to inline a functon more aggressively. Use it when profiling
-// shows that an uninlined call matters. Inlining large functions can increase code size and
-// instruction cache pressure, so don't over-use it.
-//
-// EMBER_NOINLINE keeps cold paths, such as error reporting, out of callers.
+// Use EMBER_FINLINE when profiling shows an uninlined call matters; extra inlining can increase
+// code size and instruction-cache pressure. EMBER_NOINLINE also keeps TLS lookups separate
+// when a fiber must read its current worker after a wait.
 #if EMBER_COMPILER_MSVC
 	#define EMBER_FINLINE __forceinline
 	#define EMBER_NOINLINE __declspec(noinline)
@@ -43,11 +41,8 @@
 	#define EMBER_DEBUG_BREAK() __builtin_trap()
 #endif
 
-// Tells the compiler that the result or constructed object may borrow storage from this parameter.
-// This helps diagnose dangling views, such as a view bound to a temporary. It does not extend the
-// storage's lifetime.
-//
-// Expands to nothing when the attribute is unavailable.
+// Diagnoses borrowed storage that may dangle. Does not extend its lifetime; expands to nothing
+// when the compiler has no supported attribute.
 #if EMBER_COMPILER_CLANG
 	#define EMBER_LIFETIMEBOUND [[clang::lifetimebound]]
 #elif EMBER_COMPILER_MSVC && _MSC_VER >= 1932
@@ -56,10 +51,8 @@
 	#define EMBER_LIFETIMEBOUND
 #endif
 
-// Cache line size in bytes, used to align and pad independently written data. Sharing a cache line
-// can make threads invalidate each other's cached data even when they are writing different values.
-//
-// Defaults to 64. Override this for targets that need a larger separation.
+// Separation for independently written data to reduce false sharing. Override for targets
+// that need more than 64 bytes.
 #ifndef EMBER_CACHE_LINE
 	#define EMBER_CACHE_LINE 64
 #endif
@@ -67,8 +60,7 @@
 static_assert((EMBER_CACHE_LINE & (EMBER_CACHE_LINE - 1)) == 0,
     "EMBER_CACHE_LINE must be a power of two");
 
-// Keep assertions enabled when EMBER_PROFILE is defined, even with NDEBUG. Profiling should still
-// catch invalid state. Other headers use this flag so the assertion policy stays in one place.
+// Profiling builds retain assertions even with NDEBUG.
 #if !defined(NDEBUG) || defined(EMBER_PROFILE)
 	#define EMBER_ASSERTS_ENABLED 1
 #else
@@ -91,16 +83,12 @@ static_assert((EMBER_CACHE_LINE & (EMBER_CACHE_LINE - 1)) == 0,
 
 namespace ember
 {
-	// Reports an assertion failure. Returns true if the caller should break into the debugger. Only
-	// [message] may be null.
-	//
-	// Keeping reporting in one function gives all assertions the same failure path. The default
-	// implementation writes to stderr so it does not depend on the engine logger being available.
+	// Reports to stderr without requiring the logger. Returns whether to break into the debugger.
+	// Only message may be null.
 	[[nodiscard]] bool assert_fail(const char* condition, const char* message, const char* file,
 	    int line, const char* function) noexcept;
 
-	// Stops the process, for a failure nothing can continue from. Out of line so that this
-	// header, which everything includes, does not pay for <cstdlib> to name abort.
+	// Terminates the process. Kept out of line to avoid exposing <cstdlib> to callers.
 	[[noreturn]] void halt() noexcept;
 }
 
@@ -122,8 +110,7 @@ namespace ember
 			}                                                                                      \
 		} while (false)
 #else
-    // Keep the condition type-checked without evaluating it. Referencing it also avoids
-    // unused-variable warnings for values used only by assertions, however rare.
+    // Type-check without evaluation and retain references to assertion-only variables.
 	#define EMBER_ASSERT_MSG(expr, message) ((void)sizeof(!(expr)))
 #endif
 

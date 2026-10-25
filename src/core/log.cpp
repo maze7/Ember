@@ -22,8 +22,8 @@ namespace ember::log
 		constexpr u32 MAX_SINKS = 4;
 		constexpr u8 NO_THREAD = 255;
 
-		// The ring, and whether writes go through it. s_ready flips after the ring exists and
-		// before it goes, so a write that sees it set finds a ring to push to.
+		// Route writes through the ring only while initialized. Shutdown still requires producers
+		// to be quiescent before the ring's storage is freed.
 		constinit MpmcQueue<LogRecord> s_ring;
 		constinit std::atomic<bool> s_ready{false};
 		constinit std::atomic<u8> s_level{(u8)LogLevel::Trace};
@@ -72,8 +72,6 @@ namespace ember::log
 			}
 		}
 
-		// The file name without its directories: the compiler's path is the build machine's,
-		// and the name is what a reader wants.
 		const char* short_name(const char* path)
 		{
 			const char* name = path;
@@ -88,7 +86,7 @@ namespace ember::log
 			return name;
 		}
 
-		// The console: stderr, one line per record, seconds since the first record it saw.
+		// Console timestamps are relative to the first record emitted.
 		void console(const LogRecord& record)
 		{
 			static constinit u64 s_origin = 0;
@@ -112,7 +110,7 @@ namespace ember::log
 			}
 		}
 
-		// Hands a record to the console and every sink, in order. Under the lock.
+		// Caller holds s_sink_lock while invoking sinks.
 		void emit(const LogRecord& record)
 		{
 			console(record);
@@ -122,9 +120,7 @@ namespace ember::log
 			}
 		}
 
-		// Builds a record on the caller's stack: the call site, the time, the thread, and the
-		// message formatted straight into the text with fmt's bounded vformat, cut with an
-		// ellipsis when it does not fit. Nothing here allocates.
+		// Format directly into fixed record storage and mark truncation with an ellipsis.
 		LogRecord make_record(LogLevel level, std::source_location where, fmt::string_view format,
 		    fmt::format_args args)
 		{
@@ -151,8 +147,7 @@ namespace ember::log
 			return record;
 		}
 
-		// Says, once per batch, how many records the ring lost since the last time. Under the
-		// lock, after a drain, so the line lands where the gap was.
+		// Report new drops after draining, under s_sink_lock, so each loss is reported once.
 		void report_dropped()
 		{
 			const u64 dropped = s_dropped.load(std::memory_order_relaxed);
@@ -193,8 +188,8 @@ namespace ember::log
 			return;
 		}
 
-		// Drain, close the ring to new writes, and drain again for anything that slipped in
-		// between; from then on a write goes straight to the sinks.
+		// Drain around the mode change before freeing storage. New writes use sinks directly;
+		// callers must stop concurrent producers before shutdown.
 		flush();
 		s_ready.store(false, std::memory_order_release);
 		flush();

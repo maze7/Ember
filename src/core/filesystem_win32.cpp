@@ -1,6 +1,5 @@
-// The Windows half of the file system: every public function that is one system call deep.
-// Paths are checked against the engine's contract here, spelled the system's way in UTF-16 on
-// the stack, behind the prefix that lifts the old 260 character limit, and never allocated.
+// Windows file primitives. Validated engine paths become absolute UTF-16 paths in stack
+// buffers, with the extended-length prefix to support paths beyond MAX_PATH.
 
 #if defined(_WIN32)
 
@@ -28,8 +27,7 @@ namespace ember::fs
 {
 	namespace
 	{
-		// The prefix that lifts the 260 character limit and makes the system take a path as it
-		// is spelled, which wants an absolute path behind it.
+		// Extended-length paths bypass MAX_PATH and require an absolute path after the prefix.
 		constexpr wchar_t LONG_PATH_PREFIX[] = L"\\\\?\\";
 		constexpr size_t PREFIX_LENGTH = 4;
 
@@ -39,7 +37,6 @@ namespace ember::fs
 		// 100-nanosecond ticks from the system's epoch, 1601, to Unix's.
 		constexpr u64 UNIX_EPOCH_TICKS = 116'444'736'000'000'000ull;
 
-		// The system's error, sorted into the codes callers branch on.
 		FileError classify(DWORD code)
 		{
 			switch (code)
@@ -96,8 +93,7 @@ namespace ember::fs
 			}
 		}
 
-		// The portable code for a system error. One the table has no name for is logged with its
-		// number, which is all a reader of the log could use.
+		// Preserve unexpected Win32 codes in the log when no portable error describes them.
 		FileError win32_error(DWORD code)
 		{
 			const FileError error = classify(code);
@@ -114,8 +110,7 @@ namespace ember::fs
 			return win32_error(GetLastError());
 		}
 
-		// The system's spelling of a path: checked against the engine's contract, UTF-16,
-		// backslashes, absolute against the working directory, and the prefix in front.
+		// Stack conversion to the validated absolute, prefixed UTF-16 path required by Win32.
 		struct WidePath
 		{
 			wchar_t text[MAX_PATH_BYTES];
@@ -162,8 +157,8 @@ namespace ember::fs
 			}
 		};
 
-		// Gives a system path to the caller's String in the engine's spelling: UTF-8, slashes,
-		// no prefix, and no trailing separator but a root's.
+		// Convert OS paths back to UTF-8 and engine separators, removing the extended prefix
+		// and trailing separators except at roots.
 		Result<void, FileError> give(String& out, const wchar_t* text, size_t count)
 		{
 			char buffer[MAX_PATH_BYTES];
@@ -209,7 +204,7 @@ namespace ember::fs
 			return (HANDLE)(uintptr_t)file.handle;
 		}
 
-		// A file's handle is never null, so the handle itself is the File's word.
+		// Successful file handles are non-null, preserving File{} as the invalid value.
 		File file_of(HANDLE handle)
 		{
 			return File{(u64)(uintptr_t)handle};
@@ -221,9 +216,8 @@ namespace ember::fs
 			                                 : -(i64)(UNIX_EPOCH_TICKS - ticks) * 100;
 		}
 
-		// The offset of a positional read or write. On a handle opened without
-		// FILE_FLAG_OVERLAPPED the system takes the offset from here, runs the call to completion
-		// and returns, which is the documented way to read at an offset without a shared cursor.
+		// The file handle is synchronous; OVERLAPPED supplies the requested offset without making
+		// the operation asynchronous.
 		OVERLAPPED at(u64 offset)
 		{
 			OVERLAPPED position = {};
@@ -239,7 +233,6 @@ namespace ember::fs
 			return (DWORD)(count < MOST ? count : MOST);
 		}
 
-		// One of the directories the shell keeps for the user, in the engine's spelling.
 		Result<void, FileError> known_folder(REFKNOWNFOLDERID folder, String& out)
 		{
 			PWSTR path = nullptr;
@@ -255,9 +248,8 @@ namespace ember::fs
 			return given;
 		}
 
-		// An app name is one plain component: no separator, neither dot name, none of the
-		// characters this platform refuses in a name, and no trailing dot or space, which it
-		// would drop.
+		// Reject separators, dot names and Windows-invalid characters. Trailing dots and spaces
+		// are rejected because Win32 may strip them.
 		bool plain_component(StringView app)
 		{
 			if (app.empty() || app == "." || app == ".." || app.back() == '.' || app.back() == ' ')
@@ -370,8 +362,7 @@ namespace ember::fs
 	{
 		EMBER_ASSERT(file);
 
-		// Offsets come from pack tables, which are data: a range that wraps is an error, not a
-		// bug.
+		// File offsets may come from external data, so reject overflow as an I/O error.
 		if (into.size() > std::numeric_limits<u64>::max() - offset ||
 		    offset > (u64)std::numeric_limits<LONGLONG>::max())
 		{
@@ -445,8 +436,8 @@ namespace ember::fs
 			return set.error;
 		}
 
-		// Through a handle rather than the attributes by name, so that a link is followed to
-		// what it names, as stat() does. Backup semantics is what lets a directory open.
+		// Query through a handle to follow links as POSIX stat() does. Backup semantics allows
+		// opening directories for the same query.
 		const HANDLE handle = CreateFileW(wide.text, FILE_READ_ATTRIBUTES, SHARE_ALL, nullptr,
 		    OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
 		if (handle == INVALID_HANDLE_VALUE)
@@ -493,7 +484,6 @@ namespace ember::fs
 			return set;
 		}
 
-		// The search is the directory and a star.
 		const size_t length = std::wcslen(wide.text);
 		if (length + 2 >= MAX_PATH_BYTES)
 		{
@@ -647,8 +637,8 @@ namespace ember::fs
 
 	Result<void, FileError> sync_directory(StringView path)
 	{
-		// There is no call for a directory's entries here; NTFS journals the rename itself. The
-		// path is still checked, so a bad one fails the same way on every platform.
+		// This backend does not flush directory entries. Validate the path for consistent errors;
+		// success here does not establish rename durability.
 		return validate(path);
 	}
 
@@ -661,7 +651,7 @@ namespace ember::fs
 			return last_error();
 		}
 
-		// A count past the buffer is the size the buffer should have been.
+		// GetCurrentDirectoryW returns the required size when the buffer is too small.
 		if (count >= MAX_PATH_BYTES)
 		{
 			return FileError::NameTooLong;

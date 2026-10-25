@@ -9,20 +9,16 @@
 // has its own spin mutex, so allocations on the same partition can contend.
 // The normal TLSF path takes no more memory from the system after initialize().
 //
-// Every allocation has a sixteen-byte header containing its size, tag, and
-// original block offset. free() reads these back, so callers need not remember
-// them. Tracking level 1 adds counters, budget warnings, and profiler hooks.
-// Level 2 also records source locations, numbers allocations, and links live
-// blocks for leak reporting. A trailing guard and fill patterns help expose
-// overwritten or uninitialized memory.
+// Each allocation stores its size and tag for free(). Tracking level 1 adds
+// counters, budget warnings, and profiler hooks. Level 2 adds allocation sites,
+// leak records, a trailing guard, and fill patterns for debugging bad accesses.
 //
 // Tools allocations use development memory when it is available. Failed retail
 // allocations also try that partition, with a warning on the first attempt.
 // Without development memory, a request that cannot fit calls out_of_memory().
 //
 // Direct calls capture the caller's source location. Containers and new_object
-// pass an empty location rather than reporting a line inside the wrapper. The
-// counts, budgets and leak report built from these records are in memory.h.
+// pass an empty location. Reporting is declared in memory.h.
 
 #include <ember/core/types.h>
 #include <ember/memory/alignment.h>

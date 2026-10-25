@@ -1,19 +1,11 @@
 #pragma once
 
-// File access, path helpers, and the directories a game uses for its data.
+// File access and UTF-8 path helpers. OS operations can block; run them through jobs::kick_io()
+// from jobs. Boot code and tools may call directly. Path inspection and normalize() use spelling
+// alone. Paths use '/' separators; backslashes and network shares are rejected.
 //
-// Operations that call the operating system can block. Submit them through
-// jobs::kick_io() so a waiting job can park its fiber instead of holding up a
-// worker. Direct calls suit boot code and tools. Path inspection and normalize()
-// work on the spelling alone and do not access the filesystem.
-//
-// Paths use UTF-8 and '/' separators. Backslashes are rejected so a path keeps
-// the same meaning across platforms. Absolute paths start at '/' or a drive
-// root such as "C:/".
-//
-// Input paths are borrowed StringViews. Output Strings use the caller's
-// allocator and may grow; read_file() takes a separate allocator for its bytes.
-// Fallible operations return Result values with a portable FileError.
+// Input views are borrowed. Output Strings retain the caller's allocator and may grow; whole-file
+// reads take a separate allocator for their bytes. Failures use portable FileError values.
 
 #include <ember/containers/span.h>
 #include <ember/containers/string.h>
@@ -36,8 +28,6 @@ namespace ember::fs
 	// impose a smaller limit; paths that exceed either report NameTooLong.
 	inline constexpr size_t MAX_PATH_BYTES = 4096;
 
-	// Portable failure codes keep callers independent of OS error values.
-	// None means success; Unknown covers errors without a specific mapping.
 	enum class FileError : u8
 	{
 		None = 0,
@@ -63,14 +53,11 @@ namespace ember::fs
 	    "InvalidPath", "NameTooLong", "NotDirectory", "IsDirectory", "DirectoryNotEmpty", "NoSpace",
 	    "TooLarge", "EndOfFile", "Busy", "Unsupported", "Io");
 
-	// Checks a path against the rules above without touching the disk. Empty, a NUL, a
-	// backslash, a network share, a drive without its slash, and a length past MAX_PATH_BYTES
-	// fail. Every call that takes a path checks it; data-driven callers can check first.
+	// Checks syntax and length without accessing disk. Rejects empty paths, embedded NULs,
+	// backslashes, network shares, and incomplete drive roots. Path-taking OS calls validate too.
 	Result<void, FileError> validate(StringView path);
 
-	// An open handle with explicit ownership. A value-initialized File is closed.
-	// Copying this record aliases the handle; it does not open another file or
-	// create another owner. The caller that opened it must close it once.
+	// Copying aliases the handle. The opener must close it exactly once; copies do not own it.
 	struct File
 	{
 		u64 handle = 0;
@@ -148,12 +135,10 @@ namespace ember::fs
 
 	struct ReadFileDef
 	{
-		// Upper limit for a whole-file read. Larger files report TooLarge so callers
-		// can stream them in bounded ranges instead of allocating one large buffer.
+		// Whole-file reads above this limit report TooLarge; use ranged reads for larger files.
 		u64 max_bytes = 256_mb;
 
-		// Required alignment of the returned bytes. Must be a power of two so binary
-		// data can be loaded into storage with the alignment its consumer needs.
+		// Required byte alignment, a power of two.
 		size_t alignment = DEFAULT_ALIGNMENT;
 	};
 
@@ -162,8 +147,8 @@ namespace ember::fs
 	Result<FileData, FileError> read_file(StringView path, memory::Allocator* allocator,
 	    memory::Tag tag = memory::Tag::Unknown, const ReadFileDef& def = {});
 
-	// Returns the bytes to the allocator they came from and clears the record. An empty record
-	// is harmless, and bytes from an arena need no call: the arena's lifetime takes them.
+	// Returns storage to its allocator and clears the record. Empty records are harmless;
+	// arena-backed bytes may instead be reclaimed with the arena's lifetime.
 	void free_file(FileData& data);
 
 	// Creates or truncates the target and writes its contents. Failure can leave
@@ -240,9 +225,8 @@ namespace ember::fs
 	// Replacement is atomic within one volume; cross-volume moves report Unsupported.
 	Result<void, FileError> rename(StringView from, StringView to);
 
-	// Flushes a directory's entries to persistent storage, so that a rename a save depends on
-	// survives a crash. Does nothing on a platform without such a call, where the file
-	// system's journal covers the rename.
+	// Requests directory-entry persistence where supported. Windows only validates the path;
+	// it does not flush directory entries. Crash durability depends on the filesystem and device.
 	Result<void, FileError> sync_directory(StringView path);
 
 	bool is_absolute(StringView path);
@@ -294,31 +278,11 @@ namespace ember::fs
 	// and cleanup of the files they create there.
 	Result<void, FileError> temporary_directory(String& out);
 
-	// Requests adapt file operations to the I/O threads. The task writes its
-	// result into the request, and a normal job counter reports completion.
-	//
-	//     fs::ReadFile read{.path = path, .allocator = memory::heap(),
-	//                       .tag = memory::Tag::Assets};
-	//     jobs::Counter done;
-	//
-	//     if (jobs::kick_io(fs::job(read), done) == jobs::IoKickError::None)
-	//     {
-	//         jobs::wait(done);
-	//         if (read.result)
-	//         {
-	//             use(*read.result);
-	//         }
-	//     }
-	//
-	// Requests, borrowed paths and buffers, file handles, allocators, and counters
-	// must stay valid until completion. Keep each request at a stable address and
-	// do not inspect or modify it while its task runs. A refused submission leaves
-	// the request unchanged, so check kick_io() before reading the result.
-	//
-	// Several requests can share a counter for one batch wait. Streams can keep a
-	// file open and submit bounded ReadAt requests, giving higher-priority queued
-	// work a chance between chunks. Set the JobDef priority before submission;
-	// it does not preempt an operation already running.
+	// Submit job(request) through jobs::kick_io(), then wait for its completion counter.
+	// Keep requests at stable addresses, with paths, buffers, handles, allocators, and counters
+	// alive until completion. Do not inspect or modify a request while its task runs.
+	// Rejected submissions leave requests unchanged; check acceptance before reading results.
+	// Several requests may share a counter. Priority orders queued work, without preemption.
 
 	struct OpenFile
 	{
@@ -338,8 +302,6 @@ namespace ember::fs
 		Result<FileData, FileError> result = {}; // Caller owns the returned buffer.
 	};
 
-	// Reads up to into.size() bytes at offset and reports how many arrived.
-	// Keep the file open and the destination alive until the task completes.
 	struct ReadAt
 	{
 		File file = {};
@@ -359,9 +321,7 @@ namespace ember::fs
 		Result<void, FileError> result = {};
 	};
 
-	// Returns a job that performs the request and stores its result. The job
-	// borrows the request rather than copying it. Submit through jobs::kick_io()
-	// so blocking file operations run outside the worker scheduler.
+	// Borrows the request and stores its result on an I/O thread.
 	jobs::JobDef job(OpenFile& request);
 	jobs::JobDef job(ReadFile& request);
 	jobs::JobDef job(ReadAt& request);

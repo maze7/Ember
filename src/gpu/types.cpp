@@ -7,8 +7,8 @@ namespace ember::gpu
 {
 	namespace
 	{
-		// One row per TextureFormat, in enum order. Uncompressed formats are 1 by 1 blocks, so copy
-		// math never special cases BC. Every block size divides sixteen, which staging relies on.
+		// Keep in TextureFormat order. 1x1 blocks let uncompressed formats share the copy math.
+		// Staging alignment relies on every block size dividing sixteen.
 		constexpr FormatInfo FORMATS[] = {
 		    {0, 1, 1, false, false, false},  // Undefined
 		    {1, 1, 1, false, false, false},  // R8Unorm
@@ -115,15 +115,14 @@ namespace ember::gpu
 			return false;
 		}
 
-		// A texture is something a shader or a pass can see. A copy-only image would have no
-		// view, so it is refused here rather than at view creation.
+		// Copy-only images have no view in this API.
 		if (!has_any(def.usage, TextureUsage::Sampled | TextureUsage::Storage |
 		                            TextureUsage::ColorTarget | TextureUsage::DepthTarget))
 		{
 			return false;
 		}
 
-		// A texture is a color thing or a depth thing, never both.
+		// Depth formats require depth-target usage and cannot serve as color or storage targets.
 		const FormatInfo info = format_info(def.format);
 		if (info.depth != has_any(def.usage, TextureUsage::DepthTarget) ||
 		    (info.depth && has_any(def.usage, TextureUsage::ColorTarget | TextureUsage::Storage)))
@@ -131,7 +130,7 @@ namespace ember::gpu
 			return false;
 		}
 
-		// Compressed data comes from a cooker; the GPU never writes it.
+		// Compressed textures accept uploads but expose no GPU write or copy-source usage.
 		if (info.compressed &&
 		    has_any(def.usage,
 		        TextureUsage::Storage | TextureUsage::ColorTarget | TextureUsage::CopySrc))
@@ -159,8 +158,7 @@ namespace ember::gpu
 					return false;
 				}
 				break;
-			// Rasterizing into a volume would need slice views and a 2D-compatible image.
-			// Compute and copies write volumes instead.
+			// Volume attachments are unsupported; compute and copies can write volumes.
 			case TextureType::Texture3D:
 				if (def.layers != 1 ||
 				    has_any(def.usage, TextureUsage::ColorTarget | TextureUsage::DepthTarget))
@@ -189,7 +187,7 @@ namespace ember::gpu
 			return false;
 		}
 
-		// Readback memory is what the GPU copies into; nothing else reads it.
+		// Readback buffers only accept copies from the GPU.
 		if (def.memory == MemoryLocation::Readback && def.usage != BufferUsage::CopyDst)
 		{
 			return false;
@@ -254,7 +252,6 @@ namespace ember::gpu
 			return false;
 		}
 
-		// Depth state without a depth attachment is a def that lies about itself.
 		if ((def.depth_test || def.depth_write) && def.depth_format == TextureFormat::Undefined)
 		{
 			return false;

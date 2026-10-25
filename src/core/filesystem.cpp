@@ -1,7 +1,5 @@
-// The portable half of the file system: the path contract, the lexical functions, and the
-// operations built from the primitives the platform files implement. Nothing here touches the
-// system directly; everything that does is in filesystem_posix.cpp or filesystem_win32.cpp,
-// behind the public header, the way thread.h and virtual_memory.h are split.
+// Portable path rules and file operations built on the OS primitives in filesystem_posix.cpp
+// and filesystem_win32.cpp. Temporary paths use bounded stack storage.
 
 #include <ember/core/filesystem.h>
 
@@ -19,16 +17,13 @@ namespace ember::fs
 {
 	namespace
 	{
-		// Names an atomic write tries for its sibling before giving up with Busy.
 		constexpr u32 TEMPORARY_ATTEMPTS = 64;
 
-		// Tells one process's temporaries apart. The clock tells two processes' apart, and the
-		// exclusive create catches the collision neither does.
+		// A timestamp and sequence reduce temporary-name collisions; exclusive creation decides
+		// ownership if another process chooses the same name.
 		constinit std::atomic<u32> s_temporary_sequence{0};
 
-		// A path on the stack, NUL terminated, within MAX_PATH_BYTES: the normalized form of
-		// another, a join, or a temporary's name. The platform files keep buffers of their own,
-		// since theirs hold the system's spelling.
+		// NUL-terminated engine paths in bounded stack storage. OS backends convert separately.
 		struct PathBuffer
 		{
 			char text[MAX_PATH_BYTES];
@@ -44,8 +39,7 @@ namespace ember::fs
 				return {text, length};
 			}
 
-			// Replaces or extends the contents. False, and nothing changed, when the result
-			// would not fit with its NUL.
+			// Clears first, so an oversized assignment returns false and leaves the buffer empty.
 			bool assign(StringView part)
 			{
 				length = 0;
@@ -53,6 +47,7 @@ namespace ember::fs
 				return append(part);
 			}
 
+			// An oversized append returns false without changing the buffer.
 			bool append(StringView part)
 			{
 				if (part.size() > MAX_PATH_BYTES - 1 - length)
@@ -71,7 +66,6 @@ namespace ember::fs
 				return append(StringView(&character, 1));
 			}
 
-			// Cuts the contents to [count] characters.
 			void truncate(size_t count)
 			{
 				length = count;
@@ -95,7 +89,6 @@ namespace ember::fs
 			return !path.empty() && path[0] == '/' ? 1 : 0;
 		}
 
-		// The last component the buffer holds past its root; empty when it holds none.
 		StringView last_component(const PathBuffer& buffer, size_t root)
 		{
 			const StringView held = buffer.view().substr(root);
@@ -103,8 +96,7 @@ namespace ember::fs
 			return slash == StringView::npos ? held : held.substr(slash + 1);
 		}
 
-		// normalize(), into a buffer: the public one copies the result out, and the rest of this
-		// file uses it without a String.
+		// Shared normalization keeps internal path operations off the heap.
 		Result<void, FileError> normalize_into(StringView path, PathBuffer& out)
 		{
 			if (auto valid = validate(path); !valid)
@@ -137,8 +129,7 @@ namespace ember::fs
 
 				if (component == "..")
 				{
-					// Climb: drop the component before, unless it is a ".." kept from a relative
-					// path, or there is none, in which case an absolute path has left its root.
+					// Relative paths may keep leading ".."; absolute paths may not.
 					const StringView last = last_component(out, root);
 					if (!last.empty() && last != "..")
 					{
@@ -176,8 +167,7 @@ namespace ember::fs
 			out.assign(buffer.text, buffer.length);
 		}
 
-		// As much of [into] as the file has past [offset]: all of it when the file reaches that
-		// far, less at its end. Only a failure is an error; the count says how many landed.
+		// Read until the buffer is full or EOF; a short read at EOF is successful.
 		Result<size_t, FileError> read_up_to(File file, u64 offset, Span<u8> into)
 		{
 			size_t read = 0;
@@ -310,8 +300,7 @@ namespace ember::fs
 			count = (size_t)*length;
 		}
 
-		// The size is the size at the stat: a file that shrinks under the read ends early and
-		// is EndOfFile, and one that grows is read to the size it had.
+		// Use the stat size: shrinking during the read returns EndOfFile; later growth is ignored.
 		u8* bytes = nullptr;
 		if (result && count != 0)
 		{
@@ -382,9 +371,8 @@ namespace ember::fs
 			return FileError::InvalidPath;
 		}
 
-		// The sibling is named for the moment and a counter, not for the target, so it stays
-		// short when the target's name is near the limit. A name already taken is tried again
-		// under the next number.
+		// Keep temporary basenames independent of the target so long target names leave room.
+		// Retry exclusive creation with a new sequence if a name is already taken.
 		const StringView directory = parent(path);
 		const char* separator = directory.empty() || directory.back() == '/' ? "" : "/";
 
@@ -420,7 +408,7 @@ namespace ember::fs
 			return FileError::Busy;
 		}
 
-		// From here the sibling exists, and every way out but the last removes it.
+		// Until rename succeeds, every failure path must remove the temporary sibling.
 		Result<void, FileError> result = write_exact_at(file, 0, bytes);
 		if (result && durable)
 		{
@@ -443,8 +431,7 @@ namespace ember::fs
 			return result;
 		}
 
-		// A failure past this point is after the fact: the file is in place, and only how soon
-		// the directory entry reaches the device is in doubt.
+		// Rename already succeeded. A sync failure reports uncertain durability without undoing it.
 		if (durable)
 		{
 			return sync_directory(directory.empty() ? StringView(".") : directory);
@@ -466,7 +453,6 @@ namespace ember::fs
 			return normalized;
 		}
 
-		// A root and the working directory exist by definition.
 		const size_t root = root_length(clean.view());
 		if (clean.length == root || clean.view() == ".")
 		{
@@ -603,8 +589,7 @@ namespace ember::fs
 			return normalize(path, out);
 		}
 
-		// A copy first, since [out] may be the string [path] views and the working directory
-		// lands in [out].
+		// Preserve path before writing out; the view may refer to out's storage.
 		PathBuffer relative;
 		relative.assign(path);
 

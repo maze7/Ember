@@ -1,17 +1,9 @@
 #pragma once
 
-// The last N values of a numbered series, in storage allocated once. Values are numbered in the
-// order they are pushed, from zero, and the buffer holds the window [first, next): a push claims
-// the next number and evicts the value capacity behind it, a pop drops the oldest. A value is found
-// by its number while it is inside the window, and iteration walks the window oldest to newest.
-//
-// Slots are constructed at initialize() and destroyed at shutdown(), and never move. A push hands
-// back the slot for the caller to fill and constructs nothing, so a value that owns memory keeps
-// it across reuse and a value that holds an atomic is never copied. The frame history is one of
-// these, a netcode's tick history is another, and a frame-time graph reads one through data()
-// and offset(). Not thread safe: whoever pushes owns the window.
-//
-// Costs. A push or a find is a modulo by the capacity, which need not be a power of two.
+// Fixed storage for the last N values of a numbered series. The retained range is [first, next),
+// iterated oldest to newest. Slots are built at initialize() and destroyed at shutdown(); push,
+// pop, and clear change the window without reconstructing values, preserving nested storage
+// and allowing non-copyable values such as frame records with atomics. Not thread safe.
 
 #include <ember/core/macros.h>
 #include <ember/core/types.h>
@@ -32,7 +24,6 @@ namespace ember
 		static_assert(std::is_nothrow_destructible_v<T>, "ring values are destroyed at shutdown");
 
 	public:
-		// Walks the window oldest to newest. sequence() is the number of the value under it.
 		template <typename Ref>
 		class Iter
 		{
@@ -79,8 +70,7 @@ namespace ember
 		RingBuffer(const RingBuffer&) = delete;
 		RingBuffer& operator=(const RingBuffer&) = delete;
 
-		// Takes [capacity] slots, at least one, through [allocator] under [tag], and builds a
-		// value in each. Runs once. The allocator must outlive the buffer.
+		// Builds capacity slots, at least one. Keep the allocator alive through shutdown.
 		void initialize(memory::Allocator* allocator, memory::Tag tag, u32 capacity)
 		{
 			EMBER_ASSERT_MSG(m_slots == nullptr, "initialize runs once");
@@ -100,7 +90,6 @@ namespace ember
 			m_next = 0;
 		}
 
-		// Destroys every slot and returns the storage.
 		void shutdown()
 		{
 			if (m_slots == nullptr)
@@ -121,8 +110,8 @@ namespace ember
 			m_next = 0;
 		}
 
-		// Claims the slot for the next number, evicting the value capacity behind it, and hands
-		// it back holding whatever it held before, for the caller to fill.
+		// Evicts the oldest entry when full. The returned slot retains its previous contents;
+		// the caller must prepare it for the new value.
 		T& push()
 		{
 			EMBER_ASSERT_MSG(m_slots != nullptr, "push before initialize");
@@ -169,7 +158,6 @@ namespace ember
 			return m_capacity;
 		}
 
-		// The window: the oldest value's number and the number the next push takes.
 		u64 first_sequence() const
 		{
 			return m_first;
@@ -215,8 +203,7 @@ namespace ember
 			return m_slots[slot_of(m_next - 1)];
 		}
 
-		// The slots as laid out and where the oldest value sits in them, for a plot that reads
-		// the raw array: size() values from offset() on, wrapping at capacity().
+		// Physical storage order. Read size() entries from offset(), wrapping at capacity().
 		const T* data() const
 		{
 			return m_slots;
@@ -262,7 +249,6 @@ namespace ember
 		T* m_slots = nullptr;
 		u32 m_capacity = 0;
 
-		// The oldest value held, and the number the next push takes.
 		u64 m_first = 0;
 		u64 m_next = 0;
 	};

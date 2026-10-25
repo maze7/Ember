@@ -4,16 +4,9 @@
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyC.h>
 
-// Wraps the Tracy client so engine and game code never include tracy headers directly. Tracy's own
-// headers compile every macro to nothing unless TRACY_ENABLE is defined, so instrumentation can
-// (and should) be left in shipping code paths.
-//
-// Activation is automatic; Ember's CMake sets TRACY_ENABLE from EMBER_USE_TRACY and TRACY_FIBERS
-// from EMBER_TRACE_FIBERS
-//
-// Rules of use:
-// 	- One zone macro (SCOPE / FUNCTION) per C++ scope. Open a nested block for finer grained zones.
-//  - Name strings passed to SCOPE and FRAME macros must be string literals.
+// Tracy instrumentation, enabled by CMake's EMBER_USE_TRACY and EMBER_TRACE_FIBERS options.
+// Use one scope/function zone per C++ scope; nest blocks for additional zones. Scope and frame
+// names must be string literals. Disabled builds leave the instrumentation in place as no-ops.
 namespace ember
 {
 	// A zone held in a variable instead of a scope, for spans that begin and end in different
@@ -48,9 +41,7 @@ namespace ember
 #define EMBER_PROFILE_ALLOC(ptr, size, name) TracyAllocN(ptr, size, name)
 #define EMBER_PROFILE_FREE(ptr, name) TracyFreeN(ptr, name)
 
-// Names the calling thread in captures, where the profiler keeps the whole name rather than the
-// fifteen characters Linux keeps. Tracy has no empty stand-in for this one, so the macro is
-// guarded here. thread::set_name() calls it; nothing else needs to.
+// Called by thread::set_name(). This Tracy function needs an explicit disabled-build guard.
 #if defined(TRACY_ENABLE)
 	#define EMBER_PROFILE_THREAD(name) ::tracy::SetThreadName(name)
 #else

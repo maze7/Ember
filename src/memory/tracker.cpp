@@ -78,9 +78,7 @@ namespace ember::memory
 			    (unsigned long long)region.capacity);
 		}
 
-		// Keep registered arenas here so reports can include their per-tag requests.
-		// Registration follows initialize() and shutdown(), so a fixed array avoids
-		// allocating memory to track memory.
+		// Fixed storage keeps arena registration from allocating.
 		constexpr u32 MAX_ARENAS = 32;
 		constinit SpinMutex s_arena_lock;
 		constinit const Arena* s_arenas[MAX_ARENAS];
@@ -170,8 +168,6 @@ namespace ember::memory
 
 		print_row("Total", total(), 0);
 
-		// Include partition usage so the report also shows allocation overhead
-		// and available retail capacity.
 		const MemoryMap memory_map = map();
 		std::fprintf(stderr, "\n%-12s %14s %14s %14s\n", "Region", "Used", "Peak", "Capacity");
 		print_region("Heap", memory_map.heap);
@@ -194,8 +190,7 @@ namespace ember::memory
 		u32 leaked = 0;
 
 #if EMBER_MEMORY_TRACKING >= 2
-		// Visit the most recently linked blocks first. Direct calls usually have
-		// a source location; container and object helpers pass an empty one.
+		// Container and object helpers may have no source location.
 		s_list_lock.lock();
 
 		for (internal::Header* header = s_list_head; header != nullptr;
@@ -261,8 +256,7 @@ namespace ember::memory
 		add(s_total, size);
 		const u64 previous = add(s_counters[index], size);
 
-		// Report each tag once. Repeating the warning on later allocations would
-		// bury the first crossing.
+		// Warn once per tag so later allocations do not flood the log.
 		const u64 budget = TAG_BUDGETS[index];
 		if (previous < budget && previous + size >= budget &&
 		    !s_budget_warned[index].exchange(true, std::memory_order_relaxed))

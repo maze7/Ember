@@ -1,10 +1,6 @@
-// Owns the surface, swapchain generations, and the texture handles wrapping their images.
-// Render passes use these handles like other color targets, while the swapchain keeps ownership
-// of the images. acquire() caches one image per frame and asks for a new generation when the
-// window size or surface status changes.
-//
-// end_frame() supplies any remaining present transition and queues presentation behind each
-// image's semaphore. Replaced views, semaphores, and chains use the frame-stamped graveyard.
+// Owns surfaces, swapchain generations and texture handles wrapping their borrowed images.
+// Acquisition caches one image per frame and rebuilds after size or surface changes. Each image
+// has a present semaphore; optional present fences track retirement beyond our queue timelines.
 
 #include <ember/gpu/gpu.h>
 
@@ -22,8 +18,7 @@ namespace ember::gpu
 {
 	namespace
 	{
-		// Prefer eight-bit sRGB, with BGRA first, then try the UNORM equivalents. HDR will need a
-		// separate choice of format and color space.
+		// Prefer eight-bit sRGB with BGRA first, then try UNORM equivalents.
 		VkSurfaceFormatKHR choose_surface_format(VkPhysicalDevice adapter, VkSurfaceKHR surface)
 		{
 			constexpr u32 MAX_FORMATS = 64;
@@ -92,8 +87,7 @@ namespace ember::gpu
 			return VK_PRESENT_MODE_FIFO_KHR;
 		}
 
-		// Prefer opaque composition, but honor the modes the surface supports. Compositors can
-		// require an alpha mode even when the game draws an opaque window.
+		// A compositor may require an alpha mode even for an opaque game window.
 		VkCompositeAlphaFlagBitsKHR choose_composite_alpha(const VkSurfaceCapabilitiesKHR& caps)
 		{
 			constexpr VkCompositeAlphaFlagBitsKHR PREFERRED[] = {
@@ -151,10 +145,8 @@ namespace ember::gpu
 			wait.result = vkWaitForFences(wait.device, 1, &wait.fence, VK_TRUE, UINT64_MAX);
 		}
 
-		// Wait for the image's armed present fence, parking the fiber while presentation is still
-		// using the image and its semaphore, then disarm the fence for the next present. Without
-		// present fences there is nothing to wait for, and the caller relies on the image having
-		// been reacquired.
+		// Wait for an armed present fence before reuse or retirement. Without present fences,
+		// semaphore reuse relies on reacquiring the image.
 		void wait_present(vk::Backend& b, vk::SwapchainData& data, u32 image)
 		{
 			if (!data.present_pending[image])
@@ -174,9 +166,8 @@ namespace ember::gpu
 			data.present_pending[image] = false;
 		}
 
-		// Invalidate backbuffer handles now and put their views, present semaphores and fences in
-		// the frame-stamped graveyard. The stamp covers our own queue work, not presentation, so
-		// wait out every armed present fence first. The swapchain continues to own the images.
+		// Frame stamps cover our queues, not presentation. Wait for armed present fences before
+		// retiring views and synchronization objects. The swapchain still owns the images.
 		void retire_images(vk::Backend& b, vk::SwapchainData& data)
 		{
 			for (u32 i = 0; i < data.image_count; ++i)
@@ -210,9 +201,8 @@ namespace ember::gpu
 			Failed,
 		};
 
-		// Build a generation for the current surface size. Passing oldSwapchain lets the driver
-		// reuse its resources; our old views, semaphores, and chain still retire through the
-		// graveyard.
+		// oldSwapchain permits driver reuse, but old views and synchronization objects still
+		// need retirement before the old chain can be destroyed.
 		Build build(vk::Backend& b, vk::SwapchainData& data, SwapchainHandle handle)
 		{
 			EMBER_PROFILE_SCOPE_C("gpu: build swapchain", PROFILE_COLOR_RENDER);
@@ -243,13 +233,11 @@ namespace ember::gpu
 			data.present_mode =
 			    choose_present_mode(b.ctx.adapter, data.surface, data.requested_mode);
 
-			// Request transfer usage when supported so the image can serve screenshots and copies
-			// from an offscreen target.
+			// Surface-supported transfer usage permits screenshots and offscreen copies.
 			VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 			usage |= caps.supportedUsageFlags &
 			         (VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 
-			// Backbuffers are color targets, plus whatever copies the surface allowed.
 			TextureUsage texture_usage = TextureUsage::ColorTarget;
 			if ((usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0)
 			{
@@ -522,9 +510,7 @@ namespace ember::gpu
 					continue;
 				}
 
-				// The image's previous present must be done with its semaphore and fence before
-				// either is reused. Reacquiring the image makes that likely; the fence makes it
-				// certain.
+				// Reset the previous present fence before arming it for this presentation.
 				wait_present(b, *data, pending.image);
 
 				datas[count] = data;
@@ -541,8 +527,7 @@ namespace ember::gpu
 				return;
 			}
 
-			// A present fence signals once the presentation engine holds its own references to
-			// the image and the semaphore, which is when either may be reused or destroyed.
+			// Present fences track safe release of presentation resources, not display timing.
 			const VkSwapchainPresentFenceInfoEXT fence_info{
 			    .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT,
 			    .swapchainCount = count,
@@ -632,8 +617,7 @@ namespace ember::gpu
 			return {};
 		}
 
-		// A minimized window may create its chain later. Keep the surface and handle so acquire()
-		// can finish building when the window has a usable extent.
+		// A minimized window keeps its surface and handle; acquire() builds when pixels return.
 		if (build(*b, data, handle) == Build::Failed)
 		{
 			destroy_swapchain(handle);
@@ -727,8 +711,7 @@ namespace ember::gpu
 
 		EMBER_PROFILE_SCOPE_C("gpu: acquire", PROFILE_COLOR_WAIT);
 
-		// JobMutex can stay held while the fiber waits for acquisition. Another caller for this
-		// swapchain waits here, then receives the same cached image for the frame.
+		// JobMutex permits parking during acquisition and serializes the per-frame image cache.
 		data->lock.lock();
 
 		Backbuffer result = {};

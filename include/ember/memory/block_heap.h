@@ -1,15 +1,13 @@
 #pragma once
 
-// A shared supply of fixed-size blocks, inspired by Christian Gyrling's
-// GDC 2015 talk about parallelizing the Naughty Dog engine.
+// Fixed-size blocks reclaimed in groups, following the tagged heap in Christian
+// Gyrling's GDC 2015 talk about parallelizing the Naughty Dog engine.
 //
 // Allocators claim blocks under a tag and divide them into smaller allocations.
-// Once that lifetime ends, one call returns every block carrying its tag.
-// The heap only tracks blocks, so it needs no header for each allocation.
+// Once the lifetime ends, free() returns every block carrying its tag.
 //
-// This supplies storage to allocators rather than implementing Allocator itself.
-// Taking a block holds a spin lock; an arena then allocates within its blocks
-// without returning to that lock until it needs another refill.
+// Claiming blocks holds a spin lock. Arena allocations use that lock only when
+// refilling their private blocks.
 
 #include <ember/core/enum.h>
 #include <ember/core/macros.h>
@@ -53,7 +51,6 @@ namespace ember::memory
 	inline constexpr u64 BLOCK_TAG_SEQUENCE_MASK = (u64(1) << BLOCK_TAG_SEQUENCE_BITS) - 1;
 
 	// None is reserved for the empty tag, and the sequence must fit in 56 bits.
-	// These helpers are constexpr so tags can also be used in static tables.
 	constexpr BlockTag block_tag(Lifetime lifetime, u64 sequence = 0)
 	{
 		EMBER_ASSERT(lifetime != Lifetime::None);
@@ -89,9 +86,8 @@ namespace ember::memory
 		// The payload rounds up to whole blocks and the bookkeeping to whole pages.
 		static size_t region_size(size_t capacity, size_t block_size);
 
-		// Uses an already committed, page-aligned region for both tables and blocks.
-		// Handing out blocks then needs no new mapping. Returns false if the supplied
-		// region or block size cannot form a valid pool.
+		// Uses an already committed, page-aligned region for tables and blocks.
+		// Returns false if the region or block size cannot form a valid pool.
 		[[nodiscard]] bool initialize(void* region, size_t size, size_t block_size);
 
 		// Drops the views into storage owned by the reservation. All clients must
@@ -100,8 +96,7 @@ namespace ember::memory
 		void shutdown();
 
 		// Claims the lowest available run of count consecutive blocks under tag.
-		// Returns null if no suitable run remains. Allocators call this when refilling;
-		// the lock allows different threads to claim runs safely.
+		// Holds the pool lock. Returns null if no suitable run remains.
 		[[nodiscard]] void* allocate(u32 count, BlockTag tag);
 
 		// Returns every block carrying tag and reports how many were reclaimed.

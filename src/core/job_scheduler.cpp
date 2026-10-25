@@ -15,12 +15,11 @@ namespace ember::jobs
 {
 	namespace
 	{
-		// The only thread locals in the system, read through the two calls below and nowhere
-		// else, so that no caller keeps an address across a switch; see fiber.h.
+		// Read through non-inlined functions so fiber migration cannot leave callers using an old
+		// thread's TLS address. See fiber.h.
 		constinit thread_local Worker* t_worker = nullptr;
 		constinit thread_local bool t_io_thread = false;
 
-		// What the stacks are filled with, for the high water scan.
 		constexpr u8 STACK_FILL = 0xFB;
 
 		void fiber_main(void* arg)
@@ -43,8 +42,7 @@ namespace ember::jobs
 			(void)pushed;
 		}
 
-		// A thread's time on a fiber shows in the profiler under the fiber's name, so a job is
-		// one track wherever its pieces ran. Thread records are the thread itself.
+		// Pool fibers keep one profiler identity across workers. Adopted stacks use thread tracks.
 		void trace_enter(const FiberRecord* fiber)
 		{
 			if (fiber->pool)
@@ -182,9 +180,8 @@ namespace ember::jobs
 		counter.m_remaining.fetch_add(count, std::memory_order_relaxed);
 	}
 
-	// One subtract. The release half publishes the job's writes to whoever reads zero. Past
-	// the subtract the counter is nobody's: a waiter that read zero may have destroyed it,
-	// so the last completion goes on by address alone.
+	// The release publishes job writes to a waiter that acquires zero. That waiter may destroy
+	// the counter immediately, so after decrementing use only its address to find waiters.
 	void Scheduler::complete(Counter& counter)
 	{
 		const u32 before = counter.m_remaining.fetch_sub(1, std::memory_order_acq_rel);
@@ -447,7 +444,6 @@ namespace ember::jobs
 		return ready.try_pop(fiber) ? fiber : nullptr;
 	}
 
-	// Anything this worker may continue on: a fiber whose wait completed, else a fresh one.
 	FiberRecord* Scheduler::pop_fiber(Worker& worker)
 	{
 		FiberRecord* next = pop_ready(worker);
@@ -499,8 +495,8 @@ namespace ember::jobs
 		}
 	}
 
-	// Switches to next with an action for whoever takes over, and once something switches
-	// back finishes the action that fiber left. Returns the worker this fiber resumed on.
+	// The receiving fiber handles the pending action after leaving this stack. On resumption,
+	// finish the action left by the previous fiber and return the worker we actually resumed on.
 	Worker* Scheduler::yield_to(FiberRecord* self, FiberRecord* next, Pending action)
 	{
 		Worker& worker = *self->worker;
@@ -637,7 +633,6 @@ namespace ember::jobs
 		}
 	}
 
-	// Spin a little for work that is about to arrive, then sleep.
 	void Scheduler::idle(Worker& worker)
 	{
 		for (u32 spin = 0; spin < IDLE_SPINS; ++spin)
@@ -710,9 +705,8 @@ namespace ember::jobs
 		}
 	}
 
-	// Every pool fiber runs this forever. Ready fibers come first because they hold a stack
-	// and an unfinished job; new jobs start only when nothing is waiting to resume. A fiber
-	// that switches to another one has nothing left to do and frees itself in the process.
+	// Prefer ready fibers so unfinished jobs release their stacks before new jobs consume more.
+	// An idle loop fiber can be recycled as soon as the switch leaves its stack.
 	void Scheduler::loop(FiberRecord* self)
 	{
 		Worker* worker = self->worker;
@@ -747,9 +741,8 @@ namespace ember::jobs
 		}
 	}
 
-	// The shared tail of wait() and lock(): park until what the fiber waits for has happened.
-	// A wake-up is a hint, as with a futex: a completion that zeroed an earlier counter at this
-	// address may wake a fiber parked on this one, which simply parks again.
+	// Recheck after each wake: completion of an earlier counter at the same address can wake
+	// this fiber without satisfying its current wait.
 	void Scheduler::park_until_satisfied(FiberRecord* self, Worker* worker)
 	{
 		while (!WaitList::satisfied(self))
@@ -797,8 +790,8 @@ namespace ember::jobs
 		self->wait_kind = WaitKind::None;
 	}
 
-	// Most holds are short, so spin first. A job then parks on the mutex's address and is
-	// woken by unlock(); a thread outside the scheduler keeps spinning, having no fiber.
+	// Bound the initial spin before parking a worker fiber. External threads have no scheduler
+	// fiber and must continue polling until they acquire the mutex.
 	void Scheduler::lock(JobMutex& mutex)
 	{
 		for (u32 spin = 0; spin < LOCK_SPINS; ++spin)
@@ -844,10 +837,9 @@ namespace ember::jobs
 		wake_waiters(&mutex);
 	}
 
-	// Every fiber is parked or busy on another worker. The wait spins for one to come back or
-	// for its own condition to be met. Past stall_report_ms of neither, the pool is too small
-	// for the job graph or the graph has a cycle: the first worker to notice dumps and fails,
-	// the others keep spinning for the moment the failure takes.
+	// With no replacement fiber, poll for one or for this wait to finish. If stall_report_ms
+	// elapses, one worker reports the state and terminates. A cycle or an undersized fiber pool
+	// can cause this, as can work that takes longer than the configured timeout.
 	FiberRecord* Scheduler::stall(FiberRecord* self)
 	{
 		EMBER_PROFILE_SCOPE_C("stalled wait", PROFILE_COLOR_WAIT);
@@ -878,8 +870,8 @@ namespace ember::jobs
 		}
 	}
 
-	// Racy by design: a fiber may wake and its counter go away while this runs. It is a
-	// diagnostic for a hang, when nothing is moving.
+	// This diagnostic is unsynchronized: a concurrent wake can invalidate a counter while
+	// it is inspected. It cannot safely inspect wait state while that state is changing.
 	void Scheduler::dump(const char* reason)
 	{
 		const JobStats snapshot = stats();
@@ -945,8 +937,8 @@ namespace ember::jobs
 		};
 	}
 
-	// Scans each stack up from its bottom a cache line at a time for the first line that is
-	// not all fill: that is as deep as the fiber ever reached.
+	// Estimate peak stack use from the first overwritten cache line. Untouched fill bytes
+	// are only a watermark; they do not prove that a stack address was never reached.
 	u32 Scheduler::stack_high_water() const
 	{
 #if EMBER_MEMORY_TRACKING >= 1
@@ -978,9 +970,8 @@ namespace ember::jobs
 #endif
 	}
 
-	// The thread that creates the scheduler is worker 0. Its own stack becomes main's fiber,
-	// so main waits like a job does, and main always resumes on this thread: it owns the
-	// platform and the device. Runs at the end of initialize(), on that thread.
+	// Adopt the initializing thread so main can wait like a job. Main remains pinned here
+	// because it owns platform and device operations.
 	void Scheduler::adopt_main()
 	{
 		Worker& worker = workers[0];

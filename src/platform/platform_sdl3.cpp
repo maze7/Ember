@@ -1,6 +1,5 @@
-// SDL3 behind platform.h and wsi.h. This is the one source that includes SDL. It translates
-// SDL's events into folds on the pending snapshot, keeps SDL's windows in a pool, holds the four
-// pad slots, and hands SDL the engine's allocator before SDL allocates anything.
+// SDL3 backend for windows, input and Vulkan surfaces. SDL allocations use the engine heap;
+// windows and gamepads stay within the capacities established at initialization.
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -40,8 +39,6 @@ namespace ember::platform
 			SDL_JoystickID id = 0;
 		};
 
-		// The platform between initialize() and shutdown(). The pool's storage and SDL's own
-		// state belong to that span; outside it this holds nothing.
 		struct Platform
 		{
 			bool initialized = false;
@@ -89,7 +86,7 @@ namespace ember::platform
 			return window;
 		}
 
-		// SDL names windows in its events by id; the pool is small, so a scan beats a map.
+		// The fixed window pool is small enough to resolve SDL event IDs without another index.
 		WindowHandle window_from_id(SDL_WindowID id)
 		{
 			for (auto it = s_platform.windows.begin(); it != s_platform.windows.end(); ++it)
@@ -160,8 +157,7 @@ namespace ember::platform
 			fold_gamepad_connection(s_platform.pending, slot, false, now_ns);
 		}
 
-		// Opens every pad SDL already knows. At the first pump, and again after a removal, since
-		// a pad that waited for a slot may have one now.
+		// Retry discovery after a removal so a connected gamepad can take the freed slot.
 		void discover_gamepads(u64 now_ns)
 		{
 			int count = 0;
@@ -322,9 +318,8 @@ namespace ember::platform
 			return result;
 		}
 
-		// SDL reports the pointer in points; the engine measures a window in pixels, as the
-		// swapchain does, and on a scaled display the two differ. Motion stays in points so
-		// mouse look feels the same at any scale.
+		// Convert position to swapchain pixels. Keep motion in points so display scaling does
+		// not change mouse-look sensitivity.
 		f32 pixel_density(WindowHandle handle)
 		{
 			const SdlWindow* window = s_platform.windows.get(handle);
@@ -473,8 +468,7 @@ namespace ember::platform
 
 		s_platform.def = def;
 
-		// Before any other SDL call, hints included: SDL keeps whatever allocator it had once it
-		// has allocated, and a hint is an allocation.
+		// Install allocators before SDL can allocate, including through SDL_SetHint().
 		if (!SDL_SetMemoryFunctions(sdl_malloc, sdl_calloc, sdl_realloc, sdl_free))
 		{
 			EMBER_ERROR("SDL would not take the engine's allocator");
@@ -824,7 +818,7 @@ namespace ember::platform
 			return;
 		}
 
-		// A pad without motors says so every time; that is not worth a log line.
+		// Unsupported rumble is expected for some gamepads; avoid logging it every frame.
 		(void)SDL_RumbleGamepad(gamepad, rumble_from_intensity(low), rumble_from_intensity(high),
 		    duration_ms);
 	}

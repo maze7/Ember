@@ -1,14 +1,8 @@
 #pragma once
 
-// The platform independence layer. Sits over SDL3, with the SDL3 implementation confined to one
-// source file so it is easy to later support other implementations if necessary.
-//
-// Everything here runs on main's fiber (Worker 0), which jobs.h pins to the thread that initialized
-// it, because the desktop delivers its events to the thread that opened the window. Nothing here
-// may be called from a job.
-//
-// A frame begins with [pump()], every pending event is drained and folded into the snapshot the
-// frame then reads, with no callbacks. Windows are named handles from a pool.
+// Desktop windows and input, backed by SDL3. Call only from main's fiber on worker 0:
+// desktop events belong to the thread that created the windows. pump() drains events into a
+// snapshot once per frame, before the game reads input.
 
 #include <ember/containers/string.h>
 #include <ember/core/types.h>
@@ -20,19 +14,17 @@ namespace ember::platform
 {
 	struct PlatformDef
 	{
-		// Windows the pool holds. Games usually need only 1; tools may want more.
+		// Fixed capacity; opening windows does not grow the pool.
 		u32 max_windows = 4;
 
-		// Makes every window able to carry a Vulkan surface, which loads the Vulkan library at the
-		// first window. Off for a build without graphics.
+		// Enables Vulkan surfaces for every window. The first window loads the Vulkan library.
 		bool vulkan = true;
 
-		// Pads keep reporting while the window is not focused, so a player who alt-tabs out does
-		// not drive a stuck stick.
+		// Continue receiving gamepad events while no window is focused.
 		bool background_gamepads = true;
 	};
 
-	// What kind of pad sits in a slot, so prompts can show the right glyphs.
+	// Identifies the button glyphs to use for a connected gamepad.
 	enum class GamepadType : u8
 	{
 		Unknown,
@@ -52,8 +44,7 @@ namespace ember::platform
 		Count
 	};
 
-	// Facts about a connected pad, from gamepad_info(). Not part of the snapshot, since they do
-	// not change between frames.
+	// Metadata for the gamepad currently occupying a slot. Refresh after a connection change.
 	struct GamepadInfo
 	{
 		char name[64] = {};
@@ -63,15 +54,13 @@ namespace ember::platform
 		u16 product_version = 0;
 	};
 
-	// Initializes the platform layer, plumbs allocators and creates the window pool.
+	// Requires initialized memory and jobs. Returns false if SDL setup fails.
 	bool initialize(const PlatformDef& def = {});
 
-	// Destroys what is still open, pads and windows included, and shuts down the platform layer.
+	// Destroys remaining windows, cursors and gamepads before shutting down SDL.
 	void shutdown();
 
-	// Drains every pending event into the snapshot the frame will read and returns true when the
-	// OS asked the program to quit, which includes the last window being closed. Once per frame,
-	// before the frame samples anything.
+	// Publishes input and returns true on an OS quit request, including the last window closing.
 	bool pump(InputState& input);
 
 	WindowHandle create_window(const WindowDef& def = {});
@@ -80,8 +69,7 @@ namespace ember::platform
 	// The size of the window's back buffer. 0x0 for a minimized window.
 	Extent2D window_size_in_pixels(WindowHandle window);
 
-	// How much bigger the desktop wants content drawn in this window than at 100 percent, so a UI
-	// can lay itself out in points and draw in pixels.
+	// Desktop content scale for laying out UI in points and drawing it in pixels.
 	f32 window_display_scale(WindowHandle window);
 
 	void set_window_title(WindowHandle window, const char* title);
@@ -89,27 +77,24 @@ namespace ember::platform
 	// In points, like WindowDef.
 	void set_window_size(WindowHandle window, u32 width, u32 height);
 
-	// A caller says the mode it wants every frame; only a change reaches the desktop.
+	// May be called every frame; only changes reach the desktop.
 	void set_cursor_mode(WindowHandle window, CursorMode mode);
 
-	// The shape the cursor takes until set again. A game that draws its own hides the cursor
-	// through set_cursor_mode instead.
+	// Sets the shared system cursor shape. Use set_cursor_mode() to hide it.
 	void set_cursor(SystemCursor cursor);
 
-	// Between start and stop the snapshot carries the text typed into the window and the desktop
-	// may show its own composition UI. Off, keys are keys and text stays empty.
+	// Enables UTF-8 text in the input snapshot and the desktop's composition UI. Key state
+	// remains available whether text input is enabled or not.
 	void start_text_input(WindowHandle window);
 	void stop_text_input(WindowHandle window);
 
-	// Copies the clipboard into [out], through its allocator. False, logged, when the desktop
-	// could not say.
+	// Copies clipboard text through out's allocator. Logs and returns false on failure.
 	bool clipboard_text(String& out);
 	void set_clipboard_text(const char* text);
 
 	// False when no pad is connected in the slot.
 	bool gamepad_info(u32 index, GamepadInfo& out);
 
-	// Shakes the pad in a slot, intensities in [0, 1], for duration_ms. Nothing when the slot is
-	// empty or the pad cannot.
+	// Intensities are in [0, 1]. Does nothing for empty slots or gamepads without rumble.
 	void gamepad_rumble(u32 index, f32 low, f32 high, u32 duration_ms);
 }

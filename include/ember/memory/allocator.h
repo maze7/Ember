@@ -1,11 +1,10 @@
 #pragma once
 
-// The heap and arenas share this interface so a container can use either
-// without changing its type. Passing a tag with each request lets one
-// allocator account for several subsystems.
+// Containers can use the heap or an arena without changing type. Each request
+// carries a tag for subsystem accounting.
 //
-// TagAllocator adapts this interface for standard containers. The virtual
-// calls occur when containers acquire or release storage.
+// TagAllocator adapts this interface for standard containers. Acquiring or
+// releasing storage makes a virtual call.
 
 #include <ember/core/types.h>
 #include <ember/memory/tag.h>
@@ -24,19 +23,16 @@ namespace ember::memory
 	public:
 		virtual ~Allocator() = default;
 
-		// Allocates size bytes at a power-of-two alignment and charges them to tag.
-		// where supplies optional call-site information for tracking. Failure reports
-		// the request and stops the process; this function never returns null.
+		// Alignment must be a power of two. Failure reports the request and stops
+		// the process; this function never returns null.
 		//
-		// A zero-sized allocation still has a distinct address among live allocations.
-		// Containers pass an empty source location. Direct calls to memory::allocate
-		// capture the caller's location through its default argument.
+		// Zero-size requests still get distinct live addresses. Containers pass an
+		// empty source location; direct memory::allocate calls capture the caller.
 		virtual void* allocate(memory::Tag tag, size_t size, size_t alignment,
 		    std::source_location where) = 0;
 
-		// Returns storage obtained from this allocator, using its original size and
-		// alignment. The heap retrieves the tag from the allocation header. An arena
-		// checks ownership and leaves reclamation to the end of the lifetime.
+		// Use the allocator, size, and alignment of the original request. Arena
+		// storage is reclaimed by lifetime rather than by this call.
 		virtual void deallocate(void* ptr, size_t size, size_t alignment) = 0;
 	};
 
@@ -52,7 +48,6 @@ namespace ember::memory
 		template <typename A, typename B>
 		inline constexpr bool IsPair<std::pair<A, B>> = true;
 
-		// Recognizes types whose allocator_type can be constructed from our allocator.
 		template <typename T, template <typename> typename Alloc>
 		concept TakesAllocator = requires { typename T::allocator_type; } &&
 		                         std::is_constructible_v<typename T::allocator_type, Alloc<T>>;
@@ -63,9 +58,6 @@ namespace ember::memory
 	//
 	// Move assignment and swap carry both with the storage. Copy assignment keeps
 	// the destination's allocator; copy construction inherits the source's.
-	//
-	// construct() also passes this allocator to supported allocator-aware
-	// elements, so their allocations can follow the container's allocator and tag.
 	template <typename T>
 	struct TagAllocator
 	{
@@ -106,15 +98,9 @@ namespace ember::memory
 			allocator->deallocate(ptr, count * sizeof(T), alignof(T));
 		}
 
-		// Pass the container's allocator to elements that accept one as their final
-		// constructor argument. This keeps their allocations in the same allocator
-		// and tag as the container.
-		//
-		// This matters for arenas: reclaiming container storage without running element
-		// destructors would leave behind any allocations those elements made elsewhere.
-		//
-		// Pairs need piecewise construction so each half receives its own argument
-		// list. Handle that here without adding <memory> to every container header.
+		// Pass the allocator as the final argument to allocator-aware elements,
+		// including each half of a pair, to keep their allocations in the same
+		// allocator and tag as the container.
 		template <typename U, typename... Args>
 		void construct(U* object, Args&&... args)
 		{
@@ -132,12 +118,10 @@ namespace ember::memory
 			}
 		}
 
-		// Allocators compare equal only when their backing allocator and tag match.
 		bool operator==(const TagAllocator&) const = default;
 
 	private:
-		// Append the allocator to each half's arguments when its type accepts one.
-		// Piecewise construction lets the pair build both halves directly in place.
+		// Construct each half in place with its own arguments and allocator.
 		template <typename A, typename B, typename... As, typename... Bs>
 		void construct_pair(std::pair<A, B>* object, std::piecewise_construct_t,
 		    std::tuple<As...> a, std::tuple<Bs...> b)

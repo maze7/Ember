@@ -12,7 +12,6 @@ namespace ember::jobs
 	{
 		constinit Scheduler* s_scheduler = nullptr;
 
-		// The one way the entry points reach the scheduler.
 		Scheduler& scheduler()
 		{
 			EMBER_ASSERT_MSG(s_scheduler != nullptr, "no job system");
@@ -164,7 +163,6 @@ namespace ember::jobs
 			return;
 		}
 
-		// Even ranges of about grain items; the first leftover jobs take one extra.
 		const u32 grain = def.grain == 0 ? 1 : def.grain;
 		const u32 wanted = 1 + (def.count - 1) / grain;
 		const u32 jobs = wanted < MAX_RANGE_JOBS ? wanted : MAX_RANGE_JOBS;

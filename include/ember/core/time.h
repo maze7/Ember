@@ -1,15 +1,12 @@
 #pragma once
 
-// The engine's clock. now_ns() reads the platform's steady clock in nanoseconds: it never goes
-// backwards and its origin is nobody's, so one reading means nothing alone and two readings
-// subtract. The logger stamps records with it, the scheduler times stalls by it and the frame
-// loop will measure its stages with it. A file's modification time is on the other clock, the
-// wall's, counted from the Unix epoch, and the two never meet.
+// Monotonic time for intervals and profiling. The origin is unspecified; these readings cannot
+// be compared with wall-clock timestamps such as file modification times.
 
 #include <ember/core/types.h>
 
 namespace ember
 {
-	// Nanoseconds on the steady clock. Any thread, any time, before memory::initialize() included.
+	// Nanoseconds on the steady clock. Safe on any thread, including before memory initialization.
 	u64 now_ns();
 }

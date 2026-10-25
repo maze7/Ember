@@ -1,6 +1,5 @@
-// Builds the Vulkan device and the storage its frame loop will reuse: queues and timelines,
-// resource pools, command lists, descriptor sets, and mapped rings. Initialization and shutdown run
-// on main's fiber. A failed boot takes the same teardown path as a normal shutdown.
+// Creates the device and fixed frame storage on main's fiber. Failed initialization uses
+// the normal teardown path, so every stage must leave partially created state safe to release.
 
 #include <ember/gpu/gpu.h>
 
@@ -26,7 +25,6 @@ namespace ember::gpu
 {
 	namespace
 	{
-		// Keep ownership in initialize()/shutdown(); static storage only needs the pointer.
 		vk::Backend* s_backend = nullptr;
 
 		// Keep counts after shutdown so tests can inspect validation messages from device
@@ -83,8 +81,7 @@ namespace ember::gpu
 				s_validation_errors.fetch_add(1, std::memory_order_relaxed);
 				EMBER_ERROR("vulkan[{}]: {}", id, data->pMessage);
 
-				// Break before returning from the offending call so its caller remains on the
-				// stack.
+				// Keep the offending call on the debugger's stack.
 				if (s_break_on_validation_error)
 				{
 					EMBER_DEBUG_BREAK();
@@ -104,8 +101,7 @@ namespace ember::gpu
 			return VK_FALSE;
 		}
 
-		// Vulkan enumeration asks for a count before fetching the entries. Keep this temporary boot
-		// storage under Graphics and return an empty vector if either call fails.
+		// Temporary Graphics-tagged boot storage. Empty if either enumeration call fails.
 		template <typename T, typename F>
 		Vector<T> enumerate(F fetch)
 		{
@@ -162,8 +158,7 @@ namespace ember::gpu
 		&S::member, #member                                                                        \
 	}
 
-		// Share these tables between adapter checks and device creation. Adding a requirement then
-		// checks support and enables it in the same place.
+		// Shared tables keep adapter checks and device creation on the same required features.
 		constexpr FeatureRef<VkPhysicalDeviceFeatures> REQUIRED_10[] = {
 		    EMBER_FEATURE(VkPhysicalDeviceFeatures, samplerAnisotropy),
 		    EMBER_FEATURE(VkPhysicalDeviceFeatures, depthClamp),
@@ -184,7 +179,6 @@ namespace ember::gpu
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan11Features, shaderDrawParameters),
 		};
 
-		// Timeline waits, host-side timestamp resets, and bindless descriptors need these features.
 		constexpr FeatureRef<VkPhysicalDeviceVulkan12Features> REQUIRED_12[] = {
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan12Features, timelineSemaphore),
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan12Features, hostQueryReset),
@@ -210,9 +204,7 @@ namespace ember::gpu
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan12Features, scalarBlockLayout),
 		};
 
-		// Passes and barriers use dynamic rendering and synchronization2. The shader path also
-		// needs demote-to-helper support so discarded fragments can still contribute to quad
-		// derivatives.
+		// Demote-to-helper keeps discarded fragments available for quad derivatives.
 		constexpr FeatureRef<VkPhysicalDeviceVulkan13Features> REQUIRED_13[] = {
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan13Features, dynamicRendering),
 		    EMBER_FEATURE(VkPhysicalDeviceVulkan13Features, synchronization2),
@@ -271,8 +263,6 @@ namespace ember::gpu
 			}
 		}
 
-		// Carry selection results through boot without keeping a second copy in the running
-		// backend.
 		struct AdapterInfo
 		{
 			VkPhysicalDevice handle = VK_NULL_HANDLE;
@@ -283,8 +273,7 @@ namespace ember::gpu
 			u32 compute_family = VK_QUEUE_FAMILY_IGNORED;
 			u32 transfer_family = VK_QUEUE_FAMILY_IGNORED;
 
-			// Timestamp support of each chosen family, in Queue order. A transfer-only family can
-			// have none.
+			// In Queue order; transfer-only families may have no timestamps.
 			u32 timestamp_bits[vk::QUEUE_COUNT] = {};
 
 			// The device half of swapchain maintenance exists and its feature is available.
@@ -316,7 +305,6 @@ namespace ember::gpu
 			}
 		}
 
-		// Prefer a strictly higher score. Equal scores keep the first adapter enumerated.
 		int adapter_score(AdapterKind kind, AdapterPreference preference)
 		{
 			if (preference == AdapterPreference::Any)
@@ -471,9 +459,8 @@ namespace ember::gpu
 					enabled_extensions[extension_count++] = name;
 				}
 
-				// Present fences come with swapchain maintenance, whose device extension needs
-				// these two instance extensions enabled first. A loader without them only costs
-				// the fences; query_adapter() finishes the check on the device side.
+				// Swapchain maintenance requires these instance extensions. Missing support
+				// disables present fences; query_adapter() checks the device requirements.
 				constexpr const char* MAINTENANCE[] = {
 				    VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,
 				    VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME,
@@ -494,9 +481,7 @@ namespace ember::gpu
 			}
 #endif
 
-			// Chain the callback into instance creation to catch messages before a persistent
-			// messenger exists, and during destruction after that messenger is gone. Reuse its
-			// settings below.
+			// Catch creation and destruction messages outside the persistent messenger's lifetime.
 			const void* next = nullptr;
 
 			VkDebugUtilsMessengerCreateInfoEXT messenger_info{
@@ -567,7 +552,6 @@ namespace ember::gpu
 				return false;
 			}
 
-			// Load instance functions here. Device functions are loaded after creating the device.
 			volkLoadInstanceOnly(ctx.instance);
 
 			if (ctx.debug_utils)
@@ -584,8 +568,7 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Check this adapter's required features, queue families, and descriptor limits. Only a
-		// successful result may be used to create the device from out.
+		// out is usable for device creation only on success.
 		bool query_adapter(const vk::Backend& b, VkPhysicalDevice handle, AdapterInfo& out)
 		{
 			out.handle = handle;
@@ -614,8 +597,7 @@ namespace ember::gpu
 
 			out.memory_budget = has_extension(extensions, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
-			// Present fences need the device extension and its feature bit on top of the instance
-			// extensions enabled earlier. The KHR promotion aliases these EXT names.
+			// Present fences also require the device extension and feature bit.
 			if (b.ctx.present_fences &&
 			    has_extension(extensions, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
 			{
@@ -714,8 +696,7 @@ namespace ember::gpu
 			std::snprintf(out.driver, sizeof(out.driver), "%s %s", driver.driverName,
 			    driver.driverInfo);
 
-			// The descriptor arrays must cover the configured pools. Check before selecting the
-			// adapter so an insufficient limit lets selection continue to another device.
+			// Reject undersized descriptor limits now so selection can try another adapter.
 			const GpuLimits& limits = b.def.limits;
 			const auto fits = [name](u32 available, u32 needed, const char* what)
 			{
@@ -745,8 +726,7 @@ namespace ember::gpu
 			return heap_ok;
 		}
 
-		// Score only adapters that meet the requirements. The highest score wins; enumeration order
-		// breaks ties, including AdapterPreference::Any.
+		// Score only compatible adapters; enumeration order breaks ties, including Any.
 		bool select_adapter(const vk::Backend& b, const GpuDef& def, AdapterInfo& out)
 		{
 			const Vector<VkPhysicalDevice> adapters =
@@ -787,8 +767,6 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Enable required and supported optional features, request one queue per distinct family,
-		// and load the device entry points after creation succeeds.
 		bool create_device(vk::Backend& b, const AdapterInfo& adapter)
 		{
 			vk::Context& ctx = b.ctx;
@@ -844,7 +822,6 @@ namespace ember::gpu
 				extensions[extension_count++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
 			}
 
-			// Present fences take the extension and its feature; query_adapter() found both.
 			VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance{
 			    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT,
 			    .swapchainMaintenance1 = VK_TRUE,
@@ -876,9 +853,7 @@ namespace ember::gpu
 
 			volkLoadDevice(ctx.device);
 
-			// Deduplicate native queues so shared families also share a lock and timeline. Logical
-			// queues with no dedicated family map to graphics and execute on that same native
-			// queue.
+			// Logical queues sharing a native queue must also share its lock and timeline.
 			const u32 families[vk::QUEUE_COUNT] = {adapter.graphics_family, adapter.compute_family,
 			    adapter.transfer_family};
 
@@ -948,8 +923,7 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Give VMA our CPU allocation callbacks and Vulkan entry points. A nonzero device budget
-		// limits each device-local heap separately.
+		// A nonzero device budget limits each device-local heap separately.
 		bool create_allocator(vk::Backend& b, const AdapterInfo& adapter, const GpuDef& def)
 		{
 			VmaVulkanFunctions functions = {};
@@ -966,7 +940,6 @@ namespace ember::gpu
 				                                                   : VK_WHOLE_SIZE;
 			}
 
-			// Assign by name so changes to VMA's member order do not affect this setup.
 			VmaAllocatorCreateInfo info = {};
 			info.physicalDevice = b.ctx.adapter;
 			info.device = b.ctx.device;
@@ -991,7 +964,6 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Publish the selected adapter's properties once; callers read Caps throughout device use.
 		void fill_caps(vk::Context& ctx, const AdapterInfo& adapter)
 		{
 			Caps& caps = ctx.caps;
@@ -1004,9 +976,8 @@ namespace ember::gpu
 			caps.api_version = adapter.properties.apiVersion;
 			caps.adapter_kind = to_adapter_kind(adapter.properties.deviceType);
 
-			// Sum device-local heaps and look for a host-visible type on one larger than 256 MiB.
-			// This threshold distinguishes a large mapping from the traditional small BAR window;
-			// it can also match unified memory and does not identify the hardware mechanism.
+			// A host-visible type on a heap larger than 256 MiB suggests a large mapping, but
+			// can also be unified memory. It does not identify a BAR configuration.
 			const VkPhysicalDeviceMemoryProperties& memory = adapter.memory;
 			caps.device_memory_bytes = 0;
 			for (u32 i = 0; i < memory.memoryHeapCount; ++i)
@@ -1054,13 +1025,10 @@ namespace ember::gpu
 			caps.async_compute = adapter.compute_family != VK_QUEUE_FAMILY_IGNORED;
 			caps.async_transfer = adapter.transfer_family != VK_QUEUE_FAMILY_IGNORED;
 
-			// Check the fixed push-constant and descriptor-set layout against the adapter's limits.
 			EMBER_ASSERT(limits.maxPushConstantsSize >= PUSH_CONSTANT_BYTES);
 			EMBER_ASSERT(limits.maxBoundDescriptorSets >= 2);
 		}
 
-		// Give the list a pool made for the family that will execute it and one primary buffer.
-		// Its queue, slot and index were set when it was constructed.
 		bool create_list(vk::Backend& b, CommandList& list, u32 family)
 		{
 			const VkCommandPoolCreateInfo pool_info{
@@ -1091,11 +1059,8 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Reserve each frame slot's lists and query result storage at boot. Every slot and list is
-		// constructed before the first call that can fail, so a failed boot tears down only
-		// objects that exist. Each queue's table holds its budget of lists, each with a private
-		// command pool for that queue's family, and one query pool covers all slots when
-		// timestamps are available.
+		// Construct every slot and list before fallible Vulkan calls so teardown can visit all
+		// of them after a partial failure. Native pools and queries stay fixed until shutdown.
 		bool create_slots(vk::Backend& b)
 		{
 			const u32 in_flight = b.ctx.in_flight;
@@ -1204,8 +1169,7 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Null pools and buffers are skipped by Vulkan, so this also unwinds a boot that failed
-		// partway through create_slots().
+		// Null native handles allow cleanup after a partial create_slots() failure.
 		void destroy_slots(vk::Backend& b)
 		{
 			if (b.slots == nullptr)
@@ -1269,8 +1233,7 @@ namespace ember::gpu
 
 		void set_name(const Context& ctx, VkObjectType type, u64 handle, const char* name)
 		{
-			// A loaded trampoline is not proof the extension was enabled. Check before naming an
-			// object.
+			// A loaded trampoline does not prove that the extension was enabled.
 			if (ctx.device == VK_NULL_HANDLE || !ctx.debug_utils || name == nullptr)
 			{
 				return;

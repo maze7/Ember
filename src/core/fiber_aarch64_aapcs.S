@@ -1,5 +1,5 @@
 // AArch64 AAPCS64 context switch for ember fibers.
-// Context layout, must match FiberContext in fiber_posix.cpp:
+// Context layout must match Registers in fiber_posix.cpp:
 //   0 sp   8 lr   16 x19 ... 88 x28   96 x29   104 d8 ... 160 d15   168 fpcr
 
 #if defined(__aarch64__)

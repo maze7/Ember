@@ -1,19 +1,14 @@
 #pragma once
 
-// A fiber is a stack and the registers needed to resume code on it. A switch runs entirely on the
-// calling thread and saves only the callee-saved registers, the stack pointer and the return
-// address, so a job can park in the middle of a function and the worker moves on to other work
-// within nanoseconds. The switch is hand-written assembly on x86-64 and AArch64. On Windows it is
-// OS fibers, which bring their own stacks, and the stack handed in is ignored.
+// Fibers suspend a job on its stack while the worker runs other work. POSIX switches save
+// register state in assembly; Windows fibers own their stacks and ignore the supplied stack.
 //
-// Contracts:
-// 	- The entry never returns. A fiber ends by switching away for the last time, and its owner keeps
-// 	  the stack.
-//  - A fiber runs on at most one thread at a time and is never switched to while it runs.
-//  - An adopted thread's fiber holds no state until the first switch away from it, so until then it
-// 	  can only be a switch source.
-//  - A thread local read before a switch may be wrong after it. The compiler may cache the address
-//    for the whole function, and the funciton may finish on another thread.
+// Entries never return; a finished fiber switches away and leaves its stack with the owner.
+// A fiber must run on only one thread at a time. An adopted thread can be a switch destination
+// only after its first switch away has saved its context.
+//
+// A switch may resume on another thread. Read thread locals through non-inlined functions so
+// the compiler cannot reuse a thread-local address captured before the switch.
 
 #include <cstddef>
 #include <ember/core/types.h>
@@ -22,8 +17,8 @@ namespace ember::jobs
 {
 	using FiberEntry = void (*)(void* arg);
 
-	// The saved registers, laid out by the switch code for the architecture. See fiber_posix.cpp.
-	// Sized for the largest layout  and aligned for the vector registers.
+	// Storage for either architecture's register layout, aligned for vector registers.
+	// Offsets are checked in fiber_posix.cpp against the assembly layout.
 	struct alignas(16) FiberContext
 	{
 		u8 bytes[192];
@@ -31,8 +26,8 @@ namespace ember::jobs
 
 	struct FiberDef
 	{
-		// The stack, lowest address first, from the stack partition as a rule. The fiber never
-		// frees it, and a guard page below it is the owners to arrange.
+		// Borrowed stack, lowest address first. The owner arranges the guard page and frees it
+		// only after the fiber can no longer run.
 		void* stack = nullptr;
 		size_t stack_size = 0;
 
@@ -40,8 +35,7 @@ namespace ember::jobs
 		void* arg = nullptr;
 	};
 
-	// Everything a fiber is, in the open so that a record holds one by value and nothing is
-	// allocated. Only the fiber functions write it.
+	// Stored by value in scheduler records. Only the fiber functions may modify this state.
 	struct Fiber
 	{
 		FiberContext context;
@@ -53,8 +47,7 @@ namespace ember::jobs
 		// The Win32 fiber handle, or ThreadSanitizer's view of the fiber.
 		void* platform = nullptr;
 
-		// What an AddressSanitizer needs across a switch: the fake stack it keeps for this fiber,
-		// and the bounds of the real one.
+		// AddressSanitizer needs both its fake stack and the real stack bounds across switches.
 		void* fake_stack = nullptr;
 		const void* stack_bottom = nullptr;
 		size_t stack_bytes = 0;
@@ -62,16 +55,12 @@ namespace ember::jobs
 		bool adopted = false;
 	};
 
-	// Prepares [fiber] to run [def.entry] with [def.arg] on [def.stack] the first time something
-	// switches to it.
 	void fiber_initialize(Fiber& fiber, const FiberDef& def);
 
-	// Undoes fiber_initialize: no-op on POSIX, the system's fiber on Windows. Never the running
-	// fiber.
+	// Releases platform state, not the supplied stack. The fiber must not be running.
 	void fiber_destroy(Fiber& fiber);
 
-	// Wraps the calling thread's own stack so that it can take part in switches, and undoes that.
-	// Only the thread itself, and release only once the thread is back on its own stack.
+	// Adopt and release only on the owning thread. Release after it returns to its own stack.
 	void fiber_adopt_thread(Fiber& fiber);
 	void fiber_release_thread(Fiber& fiber);
 

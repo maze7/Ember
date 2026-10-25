@@ -1,23 +1,19 @@
 #pragma once
 
-// An enum opts in to having its values named by placing EMBER_ENUM_NAMES in scope. The machinery
-// works by argument-dependent lookup on EnumTag<T>: the macro defines an overload of
-// ember_enum_names taking that tag, and the helpers below find it from wherever the macro was
-// placed.
+// Enum names and opt-in flag operators. Register names with EMBER_ENUM_NAMES in the enum's
+// namespace so argument-dependent lookup can find them.
 
 #include <cstddef>
 #include <type_traits> // IWYU pragma: keep
 
 namespace ember
 {
-	// Empty tag type used only to select the right ember_enum_names overload.
 	template <typename T>
 	struct EnumTag
 	{
 	};
 
-	// The names of an enum's values, in declaration order: a fixed array that knows its size and
-	// can be walked, and nothing more, so that a header naming an enum stays cheap.
+	// Names follow the enum's declaration order and need no dynamic storage.
 	template <size_t N>
 	struct EnumNames
 	{
@@ -44,7 +40,6 @@ namespace ember
 		}
 	};
 
-	// Copies a braced list of names into an EnumNames, deducing the count from the array.
 	template <size_t N>
 	constexpr EnumNames<N> to_names(const char* const (&raw)[N])
 	{
@@ -56,19 +51,16 @@ namespace ember
 		return names;
 	}
 
-	/// Satisfied when EMBER_ENUM_NAMES(T, ...) is in scope for T.
 	template <typename T>
 	concept NamedEnum = requires { ember_enum_names(EnumTag<T>{}); };
 
-	// Returns the names registered for T, in declaration order.
 	template <typename T>
 	constexpr auto enum_names()
 	{
 		return ember_enum_names(EnumTag<T>{});
 	}
 
-	// Returns the name registered for a single enum value. The value is not range checked: passing
-	// one outside the named range is a bug in the caller.
+	// Values must be zero-based and contiguous, and value must be in the named range.
 	template <class E>
 	const char* enum_name(E value)
 	{
@@ -76,9 +68,7 @@ namespace ember
 		return names[static_cast<size_t>(value)];
 	}
 
-	// Fails to compile when the number of names passed to EMBER_ENUM_NAMES does not match the
-	// enum's Count member. Enums without a Count member are not checked, since there is nothing to
-	// check against.
+	// Check completeness when the enum supplies a Count sentinel.
 	template <typename Type, size_t Count>
 	constexpr void check_enum_count()
 	{
@@ -89,8 +79,7 @@ namespace ember
 		}
 	}
 
-// Names an enum's values for enum_name and for JSON serialization. Place it in the Ember namespace,
-// at global scope, or in the enum's own namespace: ADL on EnumTag finds it from any of those.
+// Place this in the enum's namespace. Supply one name per zero-based, contiguous value.
 #define EMBER_ENUM_NAMES(Type, ...)                                                                \
 	constexpr auto ember_enum_names(::ember::EnumTag<Type>)                                        \
 	{                                                                                              \
@@ -101,11 +90,7 @@ namespace ember
 	}
 }
 
-// Bitwise operator for an enum class that names a set of flags. A scoped enum comes with no
-// operators at all, which is right for an enum that names one of several things and wrong for one
-// that names any combination of them. This macro opts an enum into the second kind. Call it in the
-// enum's own namespace, right after the enum, so that argument-dependent lookup finds the operators
-// wherever a value of the enum is used.
+// Define flag operators in the enum's namespace so argument-dependent lookup finds them.
 #define EMBER_ENUM_BITWISE_OPS(EnumType)                                                           \
 	static_assert(std::is_enum_v<EnumType>, "EMBER_ENUM_BITWISE_OPS needs an enum");               \
                                                                                                    \

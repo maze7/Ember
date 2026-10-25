@@ -1,18 +1,8 @@
 #pragma once
 
-// A lock for critical sections of a few dozen instructions: taking a block from the tagged heap,
-// pushing to a queue. It never sleeps the thread, so a holder that is descheduled stalls every
-// waiter, and anything longer than a handful of loads and stores belongs under a lock that can
-// wait.
-//
-// On a fiber the rule is stricter still. A job must never hold a SpinMutex across a wait: the job
-// resumes on whichever worker takes it, and in between the lock would be pinning a thread that
-// no longer has any reason to be pinned.
-//
-// The header includes <atomic> and nothing else. The pause instruction is a compiler builtin
-// and the yield is one C function, because the obvious spellings, <immintrin.h> for _mm_pause
-// and <thread> for std::this_thread::yield, cost a hundred thousand preprocessed lines, and this
-// header sits under the memory module and so under everything.
+// Busy-waiting locks for short critical sections. A descheduled holder delays every waiter.
+// Never hold one across a fiber wait; use JobMutex when contention should park the fiber.
+// Compiler intrinsics avoid pulling platform SIMD headers into allocator users.
 
 #include <ember/core/macros.h>
 #include <ember/core/types.h>
@@ -29,9 +19,7 @@ namespace ember
 {
 	namespace internal
 	{
-		// Tells the core the thread is spinning. On x86 PAUSE slows the loop so it stops saturating
-		// the bus; after enough turns the thread yields instead, which lets a holder that was
-		// descheduled run and release.
+		// Pause, then yield the OS thread so a descheduled holder has a chance to run.
 		EMBER_FINLINE void cpu_relax(u32 spins)
 		{
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
@@ -55,9 +43,8 @@ namespace ember
 		}
 	}
 
-	// The lock is one flag on its own cache line, so waiters spinning on it never slow the data
-	// it protects. Waiters read the flag until it clears and only then try to set it, which keeps
-	// the line shared instead of bouncing it between cores on every turn.
+	// Isolate the flag from protected data. Poll with reads before retrying the atomic write
+	// to reduce cache-line transfers under contention.
 	class alignas(EMBER_CACHE_LINE) SpinMutex final
 	{
 	public:

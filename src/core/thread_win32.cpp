@@ -18,10 +18,8 @@ namespace ember::thread
 	{
 		EMBER_ASSERT(name != nullptr);
 
-		// SetThreadDescription is looked up rather than linked: it arrived in Windows 10 1607,
-		// and older SDK headers, MinGW's among them, do not declare it. The debugger and crash
-		// dumps both show what it sets. Going through void (*)() keeps GCC from warning about
-		// the cast between function types.
+		// Resolve dynamically for SDKs that do not declare SetThreadDescription. The intermediate
+		// function-pointer cast avoids GCC's warning about incompatible function types.
 		using SetDescription = HRESULT(WINAPI*)(HANDLE, PCWSTR);
 		static const SetDescription s_set_description = (SetDescription)(void (*)())GetProcAddress(
 		    GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription");
@@ -46,9 +44,7 @@ namespace ember::thread
 
 	bool set_affinity(u32 processor)
 	{
-		// A machine with more than sixty-four logical processors splits them into groups, and a
-		// thread is pinned within one group. The groups' active processors are counted in
-		// order, so the flat number falls in exactly one of them.
+		// Map the engine's flat processor index to a Windows processor group and local index.
 		const WORD groups = GetActiveProcessorGroupCount();
 		u32 first = 0;
 

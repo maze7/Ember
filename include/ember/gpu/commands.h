@@ -1,22 +1,16 @@
 #pragma once
 
-// Records work into a command list opened by gpu::begin_command_list(). End the
-// list before submitting it, and stop using its pointer when the frame slot is
-// reused. The pointer reaches recording state directly without a handle lookup.
-// Each list owns its command pool, so its single writer may migrate between
-// workers; different jobs can record different lists concurrently.
+// Records into lists opened by gpu::begin_command_list(). Each list has one
+// writer, which may migrate between workers. End it before submission and stop
+// using its pointer before frame-slot reuse. Callers supply resource barriers,
+// cross-queue dependencies, and resource lifetimes.
 //
-// Shaders find resources through bindless indices. Recording state consists of
-// pipelines, an index buffer, and constant slots backed by frame-local storage.
-// Redundant binds are skipped, and changed constant offsets bind at the next use.
+// Passes set an attachment-sized viewport and scissor. Vulkan flips viewport Y
+// to keep clip-space Y up. Redundant binds are skipped; changed constant offsets
+// bind at the next draw or dispatch.
 //
-// Callers provide resource barriers and cross-queue dependencies. No per-draw
-// state tracker inserts them. Passes set an attachment-sized viewport and scissor;
-// the Vulkan viewport is flipped to keep clip-space Y pointing up.
-//
-// Commands require an open list. A non-recording list asserts in debug builds
-// and is ignored otherwise; other pass, binding, and resource preconditions
-// remain the caller's responsibility.
+// A non-recording list asserts in debug builds and is ignored otherwise. Other
+// pass, binding and resource preconditions remain the caller's responsibility.
 
 #include <ember/gpu/types.h>
 
@@ -26,8 +20,7 @@ namespace ember::gpu
 {
 	struct CommandList;
 
-	// Describes the access that a texture transition synchronizes. The backend
-	// translates each state to pipeline stages, access masks, and an image layout.
+	// Selects pipeline stages, access masks and image layout for a transition.
 	enum class TextureState : u8
 	{
 		// Discards previous contents. Use only as the source of a transition, such as
@@ -53,8 +46,7 @@ namespace ember::gpu
 		TextureState before = TextureState::Undefined;
 		TextureState after = TextureState::Undefined;
 
-		// Covers all remaining mips and layers by default. Narrow the range when
-		// subresources change state independently, as during mip generation.
+		// Narrow the range when subresources change state independently.
 		u32 base_mip = 0;
 		u32 mip_count = ALL_MIPS;
 		u32 base_layer = 0;
@@ -69,8 +61,7 @@ namespace ember::gpu
 		Queue to = Queue::Graphics;
 	};
 
-	// Describes buffer access for a dependency. Buffers have no image layout;
-	// their states select the pipeline stages and access masks to synchronize.
+	// Selects pipeline stages and access masks; buffers have no image layout.
 	enum class BufferState : u8
 	{
 		ShaderRead,
@@ -175,12 +166,10 @@ namespace ember::gpu
 	static_assert(sizeof(DrawIndirectArgs) == 16 && sizeof(DrawIndexedIndirectArgs) == 20 &&
 	              sizeof(DispatchIndirectArgs) == 12);
 
-	// Records dependencies for the named resource accesses on this list's queue.
-	// Texture barriers also change image layouts and, between queues of different
-	// families, transfer ownership. Record outside render passes, with states the
-	// list's queue supports: a transfer list has no shader stages. Buffers are
-	// shared by every queue and need no transfer; use submission waits to
-	// synchronize work on a different queue.
+	// Record outside render passes, using states this queue supports; transfer
+	// lists have no shader stages. Texture barriers also change layouts and transfer
+	// ownership between families. Buffers need no ownership transfer, but accesses
+	// on different queues still need submission waits.
 	void barrier(CommandList* list, Span<const TextureBarrier> textures,
 	    Span<const BufferBarrier> buffers = {});
 
@@ -194,19 +183,16 @@ namespace ember::gpu
 		barrier(list, {}, Span<const BufferBarrier>(&buffer, 1));
 	}
 
-	// Records a broad dependency from earlier writes to later reads and writes
-	// on this queue. Useful when diagnosing hazards, but it neither transitions
-	// image layouts nor replaces dependencies between queues.
+	// Orders earlier writes before later accesses on this queue. Does not change
+	// image layouts or synchronize independent queues.
 	void memory_barrier(CommandList* list);
 
-	// Begin and end the attachment scope for draws. Dispatches, copies, fills,
-	// and these explicit barriers belong outside that scope.
+	// Dispatches, copies, fills and explicit barriers belong outside render passes.
 	void begin_render_pass(CommandList* list, const RenderPassDef& def);
 	void end_render_pass(CommandList* list);
 
-	// Overrides the viewport or scissor within a pass. Coordinates are framebuffer
-	// pixels from the top left, with Y increasing downward. The backend handles
-	// the viewport flip; callers supply a positive viewport height.
+	// Framebuffer pixels from the top left, with Y increasing downward. Set within
+	// a pass and supply a positive viewport height; the backend handles the flip.
 	void set_viewport(CommandList* list, const Viewport& viewport);
 	void set_scissor(CommandList* list, const Rect& scissor);
 
@@ -225,11 +211,10 @@ namespace ember::gpu
 		push_constants(list, &data, sizeof(T));
 	}
 
-	// Copies data into the frame's transient storage and selects it for slot.
-	// Each block is nonempty and at most MAX_CONSTANT_BLOCK_BYTES. The next draw
-	// or dispatch binds the changed offsets; a slot keeps them until set again.
-	// Allocation failure logs and leaves the previous slot unchanged. Group updates
-	// through CONSTANTS_FRAME, CONSTANTS_PASS, and CONSTANTS_DRAW by frequency.
+	// Copies a nonempty block, at most MAX_CONSTANT_BLOCK_BYTES, into frame storage.
+	// The slot keeps its offset until set again; the next draw or dispatch binds it.
+	// Allocation failure logs and leaves the slot unchanged. Group slots by update
+	// frequency using CONSTANTS_FRAME, CONSTANTS_PASS and CONSTANTS_DRAW.
 	void set_constants(CommandList* list, u32 slot, const void* data, u32 size);
 
 	template <typename T>
@@ -286,15 +271,12 @@ namespace ember::gpu
 	// Record outside a render pass with the required copy dependencies in place.
 	void fill_buffer(CommandList* list, BufferHandle dst, u64 offset, u64 size, u32 value);
 
-	// Opens a capture label and, when available, a timestamped zone. Pair every
-	// begin with an end before ending the list. Keep name alive until its timing
-	// data has been consumed; string literals naturally meet that requirement.
-	// Zones can still label work when timestamp slots are unavailable.
+	// Pair every begin with an end before ending the list. Keep name alive until
+	// timing data is consumed. Capture labels remain available without timestamps.
 	void begin_zone(CommandList* list, const char* name, u32 color = 0);
 	void end_zone(CommandList* list);
 
-	// Pairs zone calls across scope exits. Use EMBER_GPU_ZONE and keep the scope
-	// inside the command list's recording lifetime.
+	// Keep the scope inside the command list's recording lifetime.
 	class ZoneScope final
 	{
 	public:

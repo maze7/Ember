@@ -1,8 +1,6 @@
 #pragma once
 
-// Shared implementation details for the memory module. Keeping allocation
-// headers and tracker hooks here lets the sources cooperate without exposing
-// those details to clients.
+// Heap allocation headers and tracking hooks shared within the memory module.
 
 #include <ember/core/macros.h>
 #include <ember/memory/memory.h>
@@ -27,9 +25,8 @@ namespace ember::memory::internal
 	// Copy heap partition usage into the module's memory map.
 	void heap_map(RegionStats& retail, RegionStats& development, bool& overflowed);
 
-	// Stop after a memory lifetime violation, such as allocating before
-	// initialize() or freeing after shutdown(). Continuing would touch storage
-	// the module does not own.
+	// Stop after a memory lifetime violation, such as allocation before initialize()
+	// or a free after shutdown().
 	[[noreturn]] void fatal(const char* message);
 
 	// Stored immediately before every heap payload. base_offset recovers the
@@ -50,9 +47,7 @@ namespace ember::memory::internal
 	inline constexpr u16 HEADER_MAGIC = 0xA11C;
 
 #if EMBER_MEMORY_TRACKING >= 2
-	// Extra metadata before Header at tracking level 2. The source location and
-	// allocation number identify a block. The links keep it in the live list
-	// until it is freed.
+	// Tracking level 2 places this before Header to identify live allocations.
 	struct DebugHeader
 	{
 		const char* file;
@@ -67,9 +62,8 @@ namespace ember::memory::internal
 	inline constexpr u64 TRAILING_GUARD = 0xDEADBEEFCAFEF00Dull;
 #endif
 
-	// Record a block after its header is initialized, and remove it before
-	// invalidating that header. Level 0 uses empty inline hooks so tracking
-	// adds no work on that path.
+	// Record a block after initializing its header; remove it before invalidating
+	// the header. Level 0 omits tracking.
 #if EMBER_MEMORY_TRACKING >= 1
 	void track_allocate(Header* header);
 	void track_free(Header* header);
@@ -84,7 +78,7 @@ namespace ember::memory::internal
 #endif
 
 	// Register arenas for per-tag reporting between initialize() and shutdown().
-	// Tracking level 0 needs no registry, so these hooks do nothing there.
+	// Level 0 omits the registry.
 #if EMBER_MEMORY_TRACKING >= 1
 	void register_arena(const Arena* arena);
 	void unregister_arena(const Arena* arena);

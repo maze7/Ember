@@ -13,11 +13,9 @@ namespace ember::frames
 {
 	namespace
 	{
-		// More than a pipeline of game logic, render logic, GPU and present could hold at once.
 		constexpr u32 MAX_IN_FLIGHT = 8;
 
-		// A frame's record and the stage mask that completed() reads from other threads. A frame
-		// is live while it holds its arena.
+		// The atomic mask publishes stage completion to readers on other threads.
 		struct Entry
 		{
 			Frame frame;
@@ -31,8 +29,7 @@ namespace ember::frames
 			// Frame N is the ring's value N - 1, so the ring's next number is the current frame.
 			RingBuffer<Entry> history;
 
-			// One arena for each frame that may be live at once. An arena is an Allocator, so
-			// they are objects of their own rather than an array walked by pointer.
+			// Arenas are reused only after their frame retires.
 			memory::Arena* arenas[MAX_IN_FLIGHT] = {};
 			u64 previous_begin_ns = 0;
 			u32 live = 0;
@@ -41,15 +38,13 @@ namespace ember::frames
 
 		Frames s_frames;
 
-		// A frame may be asked about while fewer than history - 1 frames have begun after it;
-		// the slot beyond that is the one begin() takes next, while others may still be reading.
+		// Exclude the next slot begin() will overwrite while other threads may still read history.
 		bool visible(u64 index)
 		{
 			const u64 current = s_frames.history.next_sequence();
 			return index != 0 && index <= current && current - index < s_frames.def.history - 1;
 		}
 
-		// Whether a record the caller holds is the history's own, for the asserts.
 		bool is_ours(const Frame& frame)
 		{
 			const Entry* entry = s_frames.history.find(frame.index - 1);
@@ -112,8 +107,7 @@ namespace ember::frames
 		Entry& entry = s_frames.history.push();
 		EMBER_ASSERT_MSG(entry.frame.memory == nullptr, "the frame this one evicts is still live");
 
-		// An arena no live frame holds. Frames may retire out of order, so the free one is found
-		// rather than taken by turn.
+		// Retirement may be out of order, so select a free arena instead of rotating through them.
 		memory::Arena* arena = nullptr;
 		for (u32 i = 0; i < s_frames.def.in_flight; ++i)
 		{
@@ -125,8 +119,7 @@ namespace ember::frames
 		}
 		EMBER_ASSERT(arena != nullptr);
 
-		// Both readings are 64-bit and are subtracted before anything becomes a float, so the
-		// clock's magnitude never reaches the delta's precision.
+		// Subtract integer timestamps before converting to float to preserve delta precision.
 		const u64 now = now_ns();
 		u64 dt_ns = index == 1 ? s_frames.def.first_dt_ns : now - s_frames.previous_begin_ns;
 		if (dt_ns > s_frames.def.max_dt_ns)

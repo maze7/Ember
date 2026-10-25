@@ -77,8 +77,8 @@ namespace ember::jobs
 			return IoKickError::Stopping;
 		}
 
-		// Counted before the task can be seen, so its completion can never run the count below
-		// zero; taken back if the queue has no room.
+		// Increment before publishing the task; it may complete as soon as the queue exposes it.
+		// Undo the increment if submission fails.
 		scheduler->add(completion, 1);
 
 		const Job queued{.fn = job.fn, .data = job.data, .name = job.name, .counter = &completion};
@@ -103,8 +103,6 @@ namespace ember::jobs
 		return (u32)total;
 	}
 
-	// An I/O thread lives here: it sleeps on the semaphore, runs one task per token, High
-	// priority first, and completes the task's counter the way a worker completes a job's.
 	void IoThreads::run(u32 index)
 	{
 		char name[16];

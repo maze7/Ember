@@ -1,9 +1,7 @@
 #pragma once
 
-// An OS window. The platform layer owns every OS Window and hands out a Handle, which stops
-// resolving once the window is destroyed. This header holds only what a Def or an input snapshot
-// has to say about a window, so that input.h can name one without the platform's whole surface
-// behind it. The functions that make and change windows are in platform.h
+// Window types shared by platform configuration and input snapshots. The platform owns each
+// OS window; its handle stops resolving after destruction. Window operations are in platform.h.
 
 #include <ember/core/enum.h>
 #include <ember/core/handle.h>
@@ -22,16 +20,14 @@ namespace ember
 		Hidden = 1 << 2,
 		Borderless = 1 << 3,
 
-		// Asks for a back buffer at the display's full pixel density. Without it a scaled display
-		// gives a window fewer pixels than points.
+		// Requests the display's full pixel density on scaled displays.
 		HighPixelDensity = 1 << 4,
 	};
 
 	EMBER_ENUM_BITWISE_OPS(WindowFlags);
 
-	// How a window is made. The size is in points, the units the desktop lays windows out in, and
-	// is clamped to the dispaly. The pixels behind a window come from window_size_in_pixels() once
-	// it exists. The title is borrowed for the call.
+	// Size is in desktop points and clamped to the display's usable area. Query
+	// window_size_in_pixels() for render dimensions. The title is borrowed only during creation.
 	struct WindowDef
 	{
 		const char* title = "Ember";
@@ -40,8 +36,7 @@ namespace ember
 		WindowFlags flags = WindowFlags::Resizable | WindowFlags::HighPixelDensity;
 	};
 
-	// What the cursor does over a window. Relative hides it, keeps it in the window and reports
-	// motion as deltas only, for mouse look.
+	// Relative mode hides and captures the cursor, reporting deltas for mouse look.
 	enum class CursorMode : u8
 	{
 		Normal,

@@ -1,11 +1,10 @@
 #pragma once
 
-// Owns one object and remembers which allocator must receive its storage.
-// The allocator must outlive the object.
+// Owns one object and returns its storage to the original allocator, which must
+// outlive it. Conversions to base types are unsupported because delete_object
+// needs the original size and alignment.
 //
-// This small wrapper keeps <memory> out of headers that own engine objects.
-// Arrays, custom deleters, and conversions between element types are left out.
-// Converting to a base type could give delete_object the wrong size or alignment.
+// Arrays and custom deleters are unsupported.
 
 #include <ember/core/macros.h>
 #include <ember/memory/allocator.h>
@@ -36,7 +35,6 @@ namespace ember
 		Unique(const Unique&) = delete;
 		Unique& operator=(const Unique&) = delete;
 
-		// Moving only transfers pointers, so container relocation cannot throw here.
 		Unique(Unique&& other) noexcept : m_object(other.m_object), m_allocator(other.m_allocator)
 		{
 			other.m_object = nullptr;
@@ -86,7 +84,6 @@ namespace ember
 			return object;
 		}
 
-		// Destroys the object, if any, and leaves this Unique empty.
 		void reset()
 		{
 			if (m_object != nullptr)

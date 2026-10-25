@@ -1,9 +1,7 @@
 #pragma once
 
-// The window system functionality Vulkan requires. The GPU module calls these so that it never
-// includes SDL (or any other platform backend), and the platform never includes Vulkan: the handle
-// types are spelled here the way vulkan_core.h spells them, so a source that includes both sees one
-// typedef twice, which C++ allows.
+// Window operations needed by Vulkan. Opaque handle declarations keep Vulkan headers out of
+// the platform backend and SDL headers out of the GPU module.
 
 #include <ember/containers/span.h>
 #include <ember/core/types.h>
@@ -17,8 +15,8 @@ static_assert(sizeof(void*) == 8, "a non-dispatchable Vulkan handle is a pointer
 
 namespace ember::platform::vulkan
 {
-	// The loader's vkGetInstanceProcAddr, as a plain function pointer for the GPU module to
-	// cast. Loads the Vulkan library the first time; null, logged, when there is none.
+	// Loads the Vulkan library and returns vkGetInstanceProcAddr for the GPU module to cast.
+	// Logs and returns null on failure.
 	using ProcAddress = void (*)();
 	ProcAddress load();
 
@@ -30,8 +28,8 @@ namespace ember::platform::vulkan
 
 	bool presentation_supported(VkInstance instance, VkPhysicalDevice device, u32 queue_family);
 
-	// A surface for [window], owned by the caller. Null, logged, when the window is gone or the
-	// desktop refused.
+	// Caller owns the surface and must destroy it before the instance. Logs and returns null
+	// for an invalid window or a platform failure.
 	VkSurfaceKHR create_surface(WindowHandle window, VkInstance instance);
 	void destroy_surface(VkInstance instance, VkSurfaceKHR surface);
 }

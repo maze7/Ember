@@ -1,13 +1,11 @@
 #pragma once
 
-// The engine's vector and matrix types, which are glm's behind Ember names. This header is intended
-// to be the one place glm is included.
+// GLM types configured for Ember. Include through this header so callers share the same options.
 
-// Makes GLM's projection functions produce Vulkan's [0, 1] depth range instead of OpenGL's [-1, 1]
+// Projection depth matches Vulkan's [0, 1] range.
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 
-// Stops GLM converting between vector sizes implicitly, so passing a Vec4 where a Vec3 is expected
-// is a compile error rather than truncation.
+// Require explicit vector conversions to catch accidental component loss.
 #define GLM_FORCE_EXPLICIT_CTOR
 
 #include <ember/core/types.h>

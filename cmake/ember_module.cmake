@@ -11,10 +11,8 @@ target_compile_options(ember_build_options INTERFACE
 #	[PUBLIC_DEPS <target>...]
 #	[PRIVATE_DEPS <target>...])
 #
-# Every module exports the whole of include/ember. Which headers belong to
-# which module is a naming convention, not something CMake tracks, so a
-# module may draw its sources from any number of directories under src.
-# A module with no SOURCES is header-only.
+# Modules share include/ember; source paths are relative to src.
+# Omit SOURCES for a header-only target.
 function(ember_add_module name)
 	cmake_parse_arguments(ARG "" "" "SOURCES;PUBLIC_DEPS;PRIVATE_DEPS" ${ARGN})
 
@@ -47,9 +45,7 @@ function(ember_add_module name)
 			PRIVATE ${ARG_PRIVATE_DEPS} ember_build_options
 		)
 
-		# Ember has no C++20 module units, so don't scan for them. The scan
-		# adds a build step and puts GCC-only flags into every compile
-		# command, which breaks every tool that reads the database.
+		# Skip scanning because Ember has no C++ module units.
 		set_target_properties(${target} PROPERTIES
 			CXX_EXTENSIONS OFF
 			CXX_SCAN_FOR_MODULES OFF

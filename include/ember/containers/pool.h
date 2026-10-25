@@ -1,26 +1,12 @@
 #pragma once
 
-// A pool gives a value a fixed slot and a Handle to find it by. Windows, GPU resources and scene
-// objects live in pools, and the rest of the engine holds handles to them rather than pointers. A
-// handle packs the slot's index with the generation the slot had when the value was made. Freeing
-// the slot advances its generation, so a handle kept past its value's life fails get() instead of
-// reading whatever took the slot. Slots never move, which keeps a pointer from get() good until
-// its slot is freed, and lets the index address tables kept beside the pool: a bindless descriptor
-// array, or the cold half of a resource that the hot loop never touches.
+// Fixed-capacity object storage with generational handles. Slots never move; returned pointers
+// remain usable only while their objects live. FIFO reuse delays generation recycling, but
+// generations can wrap and let a stale handle match again. Exhaustion returns a null handle.
 //
-// Storage is one allocation, taken at initialize() through an Allocator under a Tag and never
-// grown. Capacity is a budget: a full pool returns the null handle and the caller decides what
-// that means. Free slots wait their turn in a FIFO ring, so a freed slot comes back only after
-// every other free slot has. A slot's generation wraps after 4095 frees, and the ring is what
-// keeps a stale handle from meeting its slot's next generation any sooner than it must.
-//
-// Threading. emplace, erase, retire, release and clear mutate the pool and need the caller's lock.
-// get() needs none: it reads one slot's generation, which changes only when that slot is retired,
-// and a retire already has to come after the slot's last reader. Iteration reads the live bits
-// that mutations write, so it takes the lock too.
-//
-// Costs. get() is a bounds check and one compare. emplace() and erase() are a ring step and a bit
-// flip around the value's constructor or destructor. Iteration visits every slot, live or not.
+// Mutations and iteration require external synchronization. get() uses ordinary reads; exclude
+// retirement and reuse of its target slot for the entire access. Iteration scans every slot.
+// retire() destroys an object immediately; release() later makes its index available for reuse.
 
 #include <ember/core/handle.h>
 #include <ember/core/macros.h>
@@ -37,8 +23,7 @@
 
 namespace ember
 {
-	// Tag names the handle type, so Pool<SdlWindow, Window> hands out Handle<Window> for values
-	// of type SdlWindow. It defaults to T for the common case where the value is its own name.
+	// Tag separates the public handle type from the stored implementation type.
 	template <typename T, typename Tag = T>
 	class Pool final
 	{
@@ -47,11 +32,9 @@ namespace ember
 	public:
 		using Handle = ember::Handle<Tag>;
 
-		// A handle's index is twenty bits, so a pool holds at most 1,048,576 slots.
 		static constexpr u32 MAX_CAPACITY = Handle::MAX_INDEX + 1;
 
-		// Walks the live slots in index order. handle() names the slot under the iterator, for
-		// code that needs to pass the value on.
+		// Visits live slots in index order. Hold the pool's mutation lock while iterating.
 		template <typename Ref>
 		class Iter
 		{
@@ -108,8 +91,8 @@ namespace ember
 		Pool(const Pool&) = delete;
 		Pool& operator=(const Pool&) = delete;
 
-		// Takes [capacity] slots, in [1, MAX_CAPACITY], through [allocator] under [tag], and
-		// constructs no values. Runs once, before any emplace. The allocator must outlive the pool.
+		// Allocates fixed storage without constructing values. capacity is in [1, MAX_CAPACITY];
+		// keep allocator alive through shutdown.
 		void initialize(memory::Allocator* allocator, memory::Tag tag, u32 capacity)
 		{
 			EMBER_ASSERT_MSG(m_values == nullptr, "initialize runs once");
@@ -128,7 +111,7 @@ namespace ember
 			m_bytes = layout.bytes;
 			m_capacity = capacity;
 
-			// Generation zero is the null handle's, so no slot ever carries it.
+			// Reserve generation zero so issued handles cannot equal the null sentinel.
 			for (u32 index = 0; index < capacity; ++index)
 			{
 				m_generations[index] = 1;
@@ -142,8 +125,8 @@ namespace ember
 			reset_ring();
 		}
 
-		// Destroys every live value and returns the storage. Every handle given out is garbage
-		// afterwards. The pool can be initialized again.
+		// Stop all users before destroying values and storage. Old handles must not survive
+		// shutdown, even if the pool is later initialized again.
 		void shutdown()
 		{
 			if (m_values == nullptr)
@@ -166,9 +149,7 @@ namespace ember
 			m_retired = 0;
 		}
 
-		// Constructs a value in the oldest free slot and returns its handle, or the null handle
-		// when every slot is live or retired. The handle carries the slot's current generation,
-		// which every handle the slot gave out before has already stopped matching.
+		// Returns a null handle when all slots are live or awaiting release.
 		template <typename... Args>
 		[[nodiscard]] Handle emplace(Args&&... args)
 		{
@@ -186,8 +167,7 @@ namespace ember
 			return Handle::make(index, m_generations[index]);
 		}
 
-		// Destroys the value and puts its slot back on the ring. False for a null or stale handle,
-		// which destroys nothing.
+		// Destroys the value and immediately releases its slot. Null or stale handles return false.
 		bool erase(Handle handle)
 		{
 			if (!retire(handle))
@@ -199,10 +179,9 @@ namespace ember
 			return true;
 		}
 
-		// Destroys the value and kills the handle now, but keeps the slot off the ring until
-		// release(). For a resource whose index is still named by work in flight, such as a GPU
-		// frame reading the descriptor at that index: the value dies with the handle, the slot
-		// waits for the fence. False for a null or stale handle.
+		// Destroys the value and invalidates its handle, withholding the index until release().
+		// Use when in-flight work still names an external table entry at that index. External
+		// resources need separate retirement. Null or stale handles return false.
 		bool retire(Handle handle)
 		{
 			const u32 index = find(handle);
@@ -219,8 +198,8 @@ namespace ember
 			return true;
 		}
 
-		// Puts a retired slot back on the ring. The caller has proven that nothing in flight
-		// names the index any more; nothing here can check that.
+		// Release a retired index exactly once, after all in-flight uses have finished.
+		// The pool cannot verify that lifetime boundary.
 		void release(u32 index)
 		{
 			EMBER_ASSERT(index < m_capacity);
@@ -231,8 +210,8 @@ namespace ember
 			give_slot(index);
 		}
 
-		// The value a handle names, or null for the null handle, a stale handle or an index past
-		// the capacity. The pointer is good until the slot is erased or retired.
+		// Resolves an issued handle by bounds and generation. A returned pointer does not
+		// prevent retirement; keep the object alive for the whole access.
 		T* get(Handle handle)
 		{
 			const u32 index = find(handle);
@@ -245,9 +224,8 @@ namespace ember
 			return index == NO_SLOT ? nullptr : m_values + index;
 		}
 
-		// Destroys every live value and frees every slot, retired ones included, keeping the
-		// storage and the generations, so every handle given out before stays stale. For a level
-		// unload, once nothing in flight names a slot.
+		// Destroys live values and makes all slots available, including retired ones.
+		// Finish every in-flight use first. Storage and advanced generations are retained.
 		void clear()
 		{
 			for (u32 index = 0; index < m_capacity; ++index)
@@ -284,9 +262,7 @@ namespace ember
 			return m_free == m_capacity;
 		}
 
-		// Every slot's value by index, live or not, for a table beside the pool that addresses
-		// slots by index. A dead slot holds whatever its last value left behind, so only a
-		// trivially destructible T should be read this way.
+		// Exposes physical slot storage. Access only slots that contain live T objects.
 		T* data()
 		{
 			return m_values;
@@ -320,13 +296,11 @@ namespace ember
 	private:
 		static constexpr u32 NO_SLOT = ~0u;
 
-		// The values and the generations are read on the hot path and the ring and the live bits
-		// are written on the mutating one, so each table starts on its own cache line.
+		// Separate lookup tables from mutation tables at cache-line boundaries.
 		static constexpr size_t ALIGNMENT = alignof(T) > EMBER_CACHE_LINE
 		                                        ? alignof(T)
 		                                        : size_t(EMBER_CACHE_LINE);
 
-		// Byte offsets of the tables that follow the values in the one allocation.
 		struct Layout
 		{
 			size_t generations = 0;
@@ -353,8 +327,7 @@ namespace ember
 			return layout;
 		}
 
-		// The slot a handle names, or NO_SLOT for the null handle, a stale handle or an index past
-		// the capacity. A free slot's generation matches no handle it ever gave out.
+		// Bounds and generation check only. Callers supply issued handles, not fabricated bits.
 		u32 find(Handle handle) const
 		{
 			const u32 index = handle.index();
@@ -371,8 +344,7 @@ namespace ember
 			return ((m_live[index / 64] >> (index % 64)) & 1) != 0;
 		}
 
-		// Ends the slot's current life: the generation moves on, skipping zero, before the value's
-		// destructor runs, so nothing the destructor does can find the value through its handle.
+		// Invalidate the issued handle before running the destructor, which may resolve handles.
 		void kill(u32 index)
 		{
 			const u32 next = m_generations[index] + 1u;
@@ -381,7 +353,6 @@ namespace ember
 			m_values[index].~T();
 		}
 
-		// Pops the oldest free slot. The caller has checked that there is one.
 		u32 take_slot()
 		{
 			const u32 index = m_ring[m_ring_head];
@@ -390,8 +361,6 @@ namespace ember
 			return index;
 		}
 
-		// Pushes a slot behind every slot already waiting. The ring holds one entry per slot, so
-		// it cannot overflow.
 		void give_slot(u32 index)
 		{
 			u32 tail = m_ring_head + m_free;
@@ -404,7 +373,6 @@ namespace ember
 			++m_free;
 		}
 
-		// Every slot free, in index order, so a fresh pool hands out 0, 1, 2 and so on.
 		void reset_ring()
 		{
 			for (u32 index = 0; index < m_capacity; ++index)
@@ -418,7 +386,6 @@ namespace ember
 
 		memory::Allocator* m_allocator = nullptr;
 
-		// One allocation: the values first, then each table on its own cache line.
 		T* m_values = nullptr;
 		u16* m_generations = nullptr;
 		u32* m_ring = nullptr;

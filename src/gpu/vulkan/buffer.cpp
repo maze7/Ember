@@ -1,8 +1,6 @@
-// Each buffer owns a Vulkan buffer and a VMA allocation. Its pool index doubles as its
-// descriptor index when shaders use it as storage. All buffers accept transfer writes so
-// upload() can fill them. Upload and Readback allocations stay mapped and require coherent
-// memory, so CPU access needs no flush or invalidate. Callers still synchronize GPU access.
-// Replacement puts a new buffer behind an existing entry, keeping the handle and its index.
+// Buffers own their Vulkan storage and VMA allocation. Storage buffers use their pool index
+// as the bindless descriptor index. All buffers accept uploads. Upload and Readback mappings
+// are coherent, so no flush or invalidate is needed; CPU/GPU access still needs synchronization.
 
 #include <ember/gpu/gpu.h>
 
@@ -41,7 +39,6 @@ namespace ember::gpu
 			return cold.size == def.size && cold.usage == def.usage && cold.memory == def.memory;
 		}
 
-		// Create the Vulkan buffer and its memory for def, mapped when the location calls for it.
 		bool create_native(vk::Backend& b, const BufferDef& def, VkBuffer& buffer,
 		    VmaAllocation& allocation, VmaAllocationInfo& mapping)
 		{
@@ -62,9 +59,7 @@ namespace ember::gpu
 					allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 					break;
 
-				// Prefer device memory the CPU can map, and tell VMA that writes will be
-				// sequential. Host visibility and coherence are required; device-local placement
-				// is a preference.
+				// Coherent mapping is required; device-local placement is only preferred.
 				case MemoryLocation::Upload:
 					allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 					allocation_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
@@ -73,9 +68,7 @@ namespace ember::gpu
 					    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 					break;
 
-				// Prefer host memory that caches CPU reads. Coherence is required, while caching
-				// is a preference, so reading back still works when that memory type is
-				// unavailable.
+				// Coherence is required; cached host memory is only preferred.
 				case MemoryLocation::Readback:
 					allocation_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
 					allocation_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
@@ -101,9 +94,7 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Record the def and the native objects in the handle's entry and write its storage
-		// descriptor. Reclaimed slots have already waited for their old GPU users. The caller
-		// holds resources_lock.
+		// Hold resources_lock. The slot must have no pending GPU users before descriptor writes.
 		void publish(vk::Backend& b, BufferHandle handle, const BufferDef& def, VkBuffer buffer,
 		    VmaAllocation allocation, const VmaAllocationInfo& mapping)
 		{
@@ -225,9 +216,7 @@ namespace ember::gpu
 			return false;
 		}
 
-		// A pending frame may be reading this entry's descriptor, which Vulkan forbids rewriting
-		// until it has completed. Between frames nothing is open, so waiting out the frames in
-		// flight leaves nothing pending.
+		// Stop recording and wait for descriptor users before rewriting this slot.
 		EMBER_ASSERT_MSG(!vk::any_frame_open(*b), "replace() with a new shape needs no frame open");
 		vk::wait_frames(*b);
 
@@ -265,8 +254,7 @@ namespace ember::gpu
 		                 .handle = (u64)hot->buffer,
 		                 .allocation = cold.allocation});
 
-		// Invalidate the handle now, but leave its descriptor index unavailable until the
-		// graveyard releases it. Submitted shaders only have the index, without a generation.
+		// Shaders have no generation, so retain the index until old GPU users finish.
 		(void)b->buffers.retire(handle);
 		vk::bury(*b, {.kind = vk::Dead::Kind::BufferSlot, .handle = handle.index()});
 

@@ -8,9 +8,7 @@ namespace ember
 	bool assert_fail(const char* condition, const char* message, const char* file, int line,
 	    const char* function) noexcept
 	{
-		// One line, one write, no allocation. Everything else about reporting a failure,
-		// symbolizing a stack or filing a crash report, belongs to whoever replaces this
-		// function. The default's only job is to be impossible to break.
+		// Avoid engine services here: the allocator or logger may be the source of the failure.
 		std::fprintf(stderr, "[assert] %s:%d in %s: %s%s%s\n", file, line, function, condition,
 		    message != nullptr ? " - " : "", message != nullptr ? message : "");
 		std::fflush(stderr);

@@ -1,13 +1,9 @@
 #pragma once
 
-// Resource handles, formats, shader bindings, and descriptions of GPU state.
-// These types let materials and tools describe resources without a live device.
-//
-// Buffer, texture, and sampler handles select pool slots whose indices also
-// address the bindless descriptors. Shaders receive the index without its
-// generation, so callers must keep those resources alive while the GPU uses them.
-// Descriptor arrays start with fallback resources and are reset during retirement;
-// this does not make stale indices safe after a slot is reused.
+// Resource descriptions and shader bindings, usable without a live device.
+// Buffer, texture and sampler pool indices also address bindless descriptors.
+// Shaders receive no generation, so keep resources alive throughout GPU use.
+// Fallback descriptors do not make stale indices safe after slot reuse.
 
 #include <ember/containers/span.h>
 #include <ember/core/enum.h>
@@ -17,8 +13,6 @@
 
 namespace ember
 {
-	// Incomplete tags distinguish handle types without exposing backend objects.
-	// Callers can store and compare handles; only the owning pool resolves them.
 	struct Buffer;
 	struct Texture;
 	struct Sampler;
@@ -36,8 +30,7 @@ namespace ember
 
 namespace ember::gpu
 {
-	// Shared limits and binding numbers used by shaders/ember.slang and the backends.
-	// Changing these requires updating both sides of the shader interface together.
+	// These limits and bindings form the shader interface. Keep both sides consistent.
 	inline constexpr u32 MAX_COLOR_ATTACHMENTS = 8;
 	inline constexpr u32 MAX_MIP_LEVELS = 16;
 	inline constexpr u32 MAX_BINDLESS_SAMPLERS = 2048;
@@ -53,8 +46,8 @@ namespace ember::gpu
 	inline constexpr u32 CONSTANTS_PASS = 1;
 	inline constexpr u32 CONSTANTS_DRAW = 2;
 
-	// Set 0 holds the bindless arrays, indexed by resource slot. Cube storage views
-	// use the 2D-array binding, leaving four sampled arrays and three storage arrays.
+	// Set 0 holds bindless arrays indexed by resource slot. Cube storage views use
+	// the 2D-array binding.
 	inline constexpr u32 BINDING_SAMPLED_2D = 0;
 	inline constexpr u32 BINDING_SAMPLED_2D_ARRAY = 1;
 	inline constexpr u32 BINDING_SAMPLED_CUBE = 2;
@@ -126,10 +119,8 @@ namespace ember::gpu
 		Count
 	};
 
-	// Describes the bytes and texel dimensions of one format block. Uncompressed
-	// formats use 1x1 blocks, so upload and mip-size calculations share the same rules.
-	// Integer formats hold whole numbers rather than normalized values, which
-	// changes how a clear value is written.
+	// Uncompressed formats use 1x1 blocks, sharing upload and mip-size calculations
+	// with compressed formats. integer selects integer attachment clear values.
 	struct FormatInfo
 	{
 		u8 block_bytes = 0;
@@ -146,7 +137,7 @@ namespace ember::gpu
 	// The caller supplies a valid mip index.
 	Extent3D mip_extent(Extent3D extent, u32 mip);
 
-	// Counts the mip chain through the level where the largest dimension reaches one.
+	// Includes the final 1x1x1 mip.
 	u32 full_mip_count(Extent3D extent);
 
 	// Bytes for one tightly packed mip and layer, including depth for 3D textures.
@@ -179,11 +170,9 @@ namespace ember::gpu
 	// 2D-array storage binding.
 	u32 storage_array(TextureType type);
 
-	// Describes storage without initial pixels; upload or a render pass fills it.
-	// name is borrowed during creation for diagnostics. Only 3D textures use depth
-	// above one; array layers are explicit, with six layers for a cube. usage names
-	// at least one shader or attachment use; a copy-only image would have no view.
-	// 3D textures are filled by compute or copies, never used as attachments.
+	// Created without initial pixels. name is borrowed during creation. Only 3D
+	// textures use depth above one; cubes require six layers. At least one shader
+	// or attachment usage is required to create a view. 3D attachments are unsupported.
 	struct TextureDef
 	{
 		const char* name = "texture";
@@ -210,8 +199,6 @@ namespace ember::gpu
 
 	EMBER_ENUM_BITWISE_OPS(BufferUsage);
 
-	// The index element width travels with the binding, allowing the same buffer
-	// description to be used with either supported index format.
 	enum class IndexFormat : u8
 	{
 		U16,
@@ -219,7 +206,6 @@ namespace ember::gpu
 		Count
 	};
 
-	// Chooses the allocation's memory properties and how callers access it from the CPU.
 	enum class MemoryLocation : u8
 	{
 		// Device-local storage with no exposed CPU mapping. Fill it through uploads or copies.
@@ -260,8 +246,6 @@ namespace ember::gpu
 		Count
 	};
 
-	// Fixed border colors keep sampler descriptions portable across the backends.
-	// Custom colors would need an additional API choice and backend support.
 	enum class BorderColor : u8
 	{
 		TransparentBlack,
@@ -270,7 +254,6 @@ namespace ember::gpu
 		Count
 	};
 
-	// Comparison functions shared by depth tests and comparison samplers.
 	enum class CompareOp : u8
 	{
 		Never,
@@ -336,8 +319,7 @@ namespace ember::gpu
 		Count
 	};
 
-	// Front-facing winding after the viewport transform. Keep mesh winding and
-	// viewport orientation consistent with the culling choice.
+	// Winding after the viewport transform.
 	enum class FrontFace : u8
 	{
 		CounterClockwise,
@@ -388,10 +370,9 @@ namespace ember::gpu
 		f32 clamp = 0.0f;
 	};
 
-	// Graphics state baked into a pipeline, including its attachment formats.
-	// Vertex layouts stay in shader code because vertices are pulled from storage
-	// buffers. The depth defaults use reverse Z: clear to zero and treat larger
-	// values as closer. Match the pass's clear value to the chosen comparison.
+	// Vertices are pulled from storage buffers, so no vertex layout is required.
+	// Match attachment formats to the pass. Depth defaults use reverse Z: clear
+	// to zero and treat larger values as closer.
 	struct GraphicsPipelineDef
 	{
 		const char* name = "pipeline";
@@ -424,9 +405,8 @@ namespace ember::gpu
 		ShaderStageDef shader = {};
 	};
 
-	// Checks descriptions without creating device objects. Creation repeats these
-	// checks and logs a rejected description, but adapter limits and native creation
-	// can still fail. Tools can use this to reject malformed data before cooking.
+	// Checks descriptions without a device. Creation repeats these checks but can
+	// still fail on adapter limits or native allocation.
 	bool is_valid(const TextureDef& def);
 	bool is_valid(const BufferDef& def);
 	bool is_valid(const SamplerDef& def);

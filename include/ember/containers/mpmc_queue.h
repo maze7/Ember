@@ -1,16 +1,9 @@
 #pragma once
 
-// A bounded queue that any number of threads may push to and pop from at once, following Dmitry
-// Vyukov's design. The cells are allocated once at initialize(), through an Allocator under a tag,
-// and nothing is allocated after.
-//
-// Every cell carries a sequence number that says whose turn it is. A producer holding a ticket t
-// may fill cell t & mask once the cell's sequence equals t; filling it publishes sequence t + 1,
-// which is what the consumer holding ticket t waits for, and consuming publishes t + capacity for
-// the producer of the next lap. Tickets are claimed with a compare-exchange on the push or pop
-// position, so no two threads ever touch one cell in the same role, and values are published
-// through the sequence alone. A release store on one side, an acquire load on the other. Lock free,
-// no allocation, and no ABA problem because a ticket is never reused within a lap.
+// Bounded multi-producer, multi-consumer queue based on Dmitry Vyukov's sequence-number design.
+// Storage is fixed at initialize(). Tickets assign cells; release/acquire sequence updates
+// publish values and permit reuse. A paused ticket owner can hold up the opposite side, so
+// a failed operation does not prove that the whole queue is full or empty.
 
 #include <ember/core/macros.h>
 #include <ember/core/types.h>
@@ -43,8 +36,8 @@ namespace ember
 		MpmcQueue(const MpmcQueue&) = delete;
 		MpmcQueue& operator=(const MpmcQueue&) = delete;
 
-		// Takes [capacity] cells, a power of two of at least two, through [allocator] under [tag].
-		// Runs once, before any thread pushes or pops. The allocator must outlive the queue.
+		// capacity must be a power of two, above zero. Initialize before starting producers
+		// or consumers, and keep the allocator alive through shutdown.
 		void initialize(memory::Allocator* allocator, memory::Tag tag, size_t capacity)
 		{
 			EMBER_ASSERT_MSG(m_cells == nullptr, "initialize runs once");
@@ -57,7 +50,6 @@ namespace ember
 			m_mask = capacity - 1;
 			m_capacity = capacity;
 
-			// Cell i starts on ticket i, so the first lap's producers find their turn waiting.
 			for (size_t index = 0; index < capacity; ++index)
 			{
 				Cell* cell = ::new ((void*)(m_cells + index)) Cell;
@@ -68,8 +60,7 @@ namespace ember
 			m_pop.store(0, std::memory_order_relaxed);
 		}
 
-		// Returns the cells. Whatever was still queued is dropped, and the cells hold nothing
-		// that needs destroying. For teardown, once every producer and consumer has stopped.
+		// Stop every producer and consumer first. Remaining queued values are discarded.
 		void shutdown()
 		{
 			if (m_cells == nullptr)
@@ -84,8 +75,7 @@ namespace ember
 			m_capacity = 0;
 		}
 
-		// Copies [value] in. False when the queue is full at this instant, or looks it, see
-		// above; the value is then still the caller's.
+		// Returns false if the next cell is unavailable; value is never modified.
 		[[nodiscard]] bool try_push(const T& value)
 		{
 			EMBER_ASSERT_MSG(m_cells != nullptr, "push before initialize");
@@ -102,7 +92,6 @@ namespace ember
 
 				if (turn == 0)
 				{
-					// Our turn at this cell, if no other producer takes the ticket first.
 					if (m_push.compare_exchange_weak(ticket, ticket + 1, std::memory_order_relaxed))
 					{
 						break;
@@ -110,13 +99,11 @@ namespace ember
 				}
 				else if (turn < 0)
 				{
-					// The consumer of the previous lap has not emptied this cell: full.
+					// This cell has not yet been released by its previous consumer.
 					return false;
 				}
 				else
 				{
-					// Another producer took the ticket while we looked; start again from the
-					// position it left.
 					ticket = m_push.load(std::memory_order_relaxed);
 				}
 			}
@@ -126,8 +113,7 @@ namespace ember
 			return true;
 		}
 
-		// Copies the oldest value out. False when the queue is empty at this instant, or looks
-		// it, see above.
+		// Returns false if the next cell is unpublished, leaving out unchanged.
 		[[nodiscard]] bool try_pop(T& out)
 		{
 			EMBER_ASSERT_MSG(m_cells != nullptr, "pop before initialize");
@@ -151,7 +137,7 @@ namespace ember
 				}
 				else if (turn < 0)
 				{
-					// The producer of this lap has not filled this cell: empty.
+					// The owner of this ticket has not published a value.
 					return false;
 				}
 				else
@@ -170,9 +156,8 @@ namespace ember
 			return m_capacity;
 		}
 
-		// Distance between the two positions at the moment of the call. Claimed but unpublished
-		// cells count, so this is a hint for stats and idle decisions, not a promise that the
-		// next push or pop succeeds.
+		// Approximate ticket distance, including unpublished cells. Counts are sampled separately;
+		// use for telemetry, not to decide whether a push or pop will succeed.
 		size_t size_hint() const
 		{
 			const size_t push = m_push.load(std::memory_order_relaxed);
@@ -192,8 +177,7 @@ namespace ember
 		size_t m_mask = 0;
 		size_t m_capacity = 0;
 
-		// A cache line each: producers hammer one position and consumers the other, and neither
-		// should drag the other's line back and forth.
+		// Separate producer and consumer counters to reduce false sharing.
 		alignas(EMBER_CACHE_LINE) std::atomic<size_t> m_push{0};
 		alignas(EMBER_CACHE_LINE) std::atomic<size_t> m_pop{0};
 	};

@@ -1,7 +1,5 @@
-// All pipelines share these bindless arrays, dynamic constant slots, and pipeline layout.
-// Unused array entries start with fallback descriptors, and reclamation restores them before
-// a slot can be reused. This gives unused slots defined resources; it does not validate shader
-// indices or keep a stale index from naming a later resource.
+// All pipelines share the bindless arrays, dynamic constants and layout. Unused slots start
+// with fallbacks; reclamation restores them before reuse. Stale indices can name later resources.
 
 #include <ember/gpu/gpu.h>
 
@@ -232,8 +230,7 @@ namespace ember::gpu::vk
 			return false;
 		}
 
-		// Share one layout so pipeline changes keep descriptor sets and push constants
-		// compatible. The push constant range is the same for every shader stage.
+		// A shared layout keeps descriptors and push constants compatible across pipeline binds.
 		const VkDescriptorSetLayout set_layouts[] = {heap.heap_layout, heap.constants_layout};
 		const VkPushConstantRange push_range{
 		    .stageFlags = VK_SHADER_STAGE_ALL,
@@ -411,7 +408,6 @@ namespace ember::gpu::vk
 			return false;
 		}
 
-		// Populate every array entry now, including slots that no resource has claimed yet.
 		const u32 textures = b.def.limits.max_textures;
 		for (u32 i = 0; i < SAMPLED_ARRAY_COUNT; ++i)
 		{
@@ -474,8 +470,7 @@ namespace ember::gpu::vk
 		const Context& ctx = b.ctx;
 		Heap& heap = b.heap;
 
-		// Destroying the pool releases both sets. Null handles let this also clean up a boot
-		// that failed before creating every object.
+		// The pool owns both sets. Null handles permit cleanup after partial boot failure.
 		vkDestroyDescriptorPool(ctx.device, heap.pool, &ctx.callbacks);
 		vkDestroyPipelineLayout(ctx.device, heap.pipeline_layout, &ctx.callbacks);
 		vkDestroyDescriptorSetLayout(ctx.device, heap.heap_layout, &ctx.callbacks);

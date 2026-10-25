@@ -1,8 +1,6 @@
-// Pipelines share the heap's layout, but their pool indices never reach shaders. Creation asks
-// the driver to compile on the calling thread, so keep it away from work a frame must wait for.
-// Shader modules are temporary inputs and can be released once pipeline creation returns.
-// Destruction invalidates the handle now and defers the Vulkan object's release; replacement
-// builds a new pipeline and swaps it behind the handle, which is how a shader hot reloads.
+// Pipelines share the heap's layout. Driver compilation runs on the calling thread, so keep
+// creation away from frame-critical work. Shader modules are released after compilation;
+// compiled pipelines retire only after their frames complete.
 
 #include <ember/gpu/gpu.h>
 
@@ -48,8 +46,6 @@ namespace ember::gpu
 			return VK_CULL_MODE_NONE;
 		}
 
-		// All presets write every channel. Blended presets add weighted source and destination
-		// values; opaque rendering disables blending and writes the source directly.
 		VkPipelineColorBlendAttachmentState to_vk(BlendPreset preset)
 		{
 			VkPipelineColorBlendAttachmentState state{
@@ -92,8 +88,6 @@ namespace ember::gpu
 			return state;
 		}
 
-		// Wrap the shader code for pipeline creation. Definition validation has already checked
-		// that the byte count and address meet SPIR-V's four-byte word alignment.
 		VkShaderModule create_module(const vk::Context& ctx, const ShaderStageDef& stage,
 		    const char* pipeline_name)
 		{
@@ -127,8 +121,7 @@ namespace ember::gpu
 			};
 		}
 
-		// Adopt the compiled pipeline under the pool lock. If the pool is full, release it here
-		// because no caller has received a handle that could submit it.
+		// An unpublished pipeline has no GPU users and can be destroyed if the pool is full.
 		template <typename P>
 		typename P::Handle adopt(vk::Backend& b, P& pool, VkPipeline pipeline, const char* name)
 		{
@@ -147,9 +140,7 @@ namespace ember::gpu
 			return handle;
 		}
 
-		// Put a freshly built pipeline behind an existing handle and retire the one it replaces.
-		// A list recording meanwhile binds whichever it reads; the graveyard keeps the old one
-		// until its frames complete.
+		// Recording may read either version. Retirement keeps the old one alive for its frames.
 		template <typename P>
 		bool swap(vk::Backend& b, P& pool, typename P::Handle handle, VkPipeline pipeline,
 		    const char* name)
@@ -174,9 +165,8 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Recorded commands hold the Vulkan pipeline directly, so its CPU pool slot can be
-		// reused as soon as the handle is invalidated. Keep the Vulkan object in the graveyard
-		// until the frames that could use it have completed.
+		// Commands hold the native pipeline, not its pool index. Reuse the index immediately
+		// while retaining the native object until its frames finish.
 		template <typename P>
 		void drop(vk::Backend& b, P& pool, typename P::Handle handle)
 		{
@@ -192,7 +182,6 @@ namespace ember::gpu
 			b.resources_lock.unlock();
 		}
 
-		// Compile a graphics pipeline for def, or return null with the failure logged.
 		VkPipeline build(const vk::Backend& b, const GraphicsPipelineDef& def)
 		{
 			const vk::Context& ctx = b.ctx;
@@ -217,8 +206,7 @@ namespace ember::gpu
 			    stage_info(VK_SHADER_STAGE_FRAGMENT_BIT, fragment, def.fragment.entry),
 			};
 
-			// Shaders fetch vertices from storage buffers, so there are no vertex bindings to
-			// describe.
+			// Shaders pull vertices from storage buffers.
 			const VkPipelineVertexInputStateCreateInfo vertex_input{
 			    .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 			};
@@ -228,8 +216,7 @@ namespace ember::gpu
 			    .topology = to_vk(def.topology),
 			};
 
-			// Reserve one viewport and scissor here. Command recording supplies their values for
-			// each render pass and may change them later.
+			// Command recording supplies the viewport and scissor dynamically.
 			const VkPipelineViewportStateCreateInfo viewport{
 			    .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
 			    .viewportCount = 1,
@@ -238,8 +225,7 @@ namespace ember::gpu
 
 			const bool biased = def.depth_bias.constant != 0.0f || def.depth_bias.slope != 0.0f;
 
-			// Pass through the engine's winding choice. It shares its screen-space convention with
-			// the negative-height viewport used during command recording.
+			// Winding is defined after the negative-height viewport transform.
 			const VkPipelineRasterizationStateCreateInfo raster{
 			    .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 			    .depthClampEnable = def.depth_clamp ? VK_TRUE : VK_FALSE,
@@ -331,7 +317,6 @@ namespace ember::gpu
 			return pipeline;
 		}
 
-		// Compile a compute pipeline for def, or return null with the failure logged.
 		VkPipeline build(const vk::Backend& b, const ComputePipelineDef& def)
 		{
 			const vk::Context& ctx = b.ctx;

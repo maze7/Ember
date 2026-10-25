@@ -1,19 +1,8 @@
 #pragma once
 
-// A value and the error that came with it, for calls that can fail. Results are used as an
-// alternative to exceptions, as the engine is designed to be exception free. Ember follows the
-// "Zero is success" ideaology. It reads like so:
-//
-// 		if (auto opened = fs::open(path, mode); !opened)
-// 		{
-// 			return opened.error;
-// 		}
-//
-// 		use(*opened);
-//
-// 		auto [file, error] = fs::open(path, mode);
-//
-// A function with nothing but an error to report returns Result<void, E>.
+// Plain values and explicit errors for boot and I/O boundaries. E::None must be zero.
+// Check success before using the value; dereference operators do not check the error.
+// Use Result<void, E> when a call has no value to return.
 
 #include <ember/core/macros.h>
 #include <ember/core/types.h>
@@ -68,7 +57,6 @@ namespace ember
 			return &value;
 		}
 
-		// The value, or [fallback] on a failure.
 		EMBER_FINLINE T value_or(T fallback) const
 		{
 			return error == E::None ? value : fallback;

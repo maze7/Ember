@@ -1,28 +1,14 @@
 #pragma once
 
-// Owns the memory reservation and the allocators built over it. Callers that
-// only need heap allocation or object construction can include heap.h or
-// new.h directly.
-//
-// At startup, we reserve one address range for the heap, the block pool, fiber
-// stacks, and optional development memory. The normal allocator backend works
-// within these partitions, making their capacities explicit memory budgets.
+// Reserves one address range at startup for the heap, block pool, fiber stacks,
+// and optional development memory. Allocators work within these fixed budgets.
 // Sanitizer builds use the system allocator for heap storage.
 //
-// Use an arena when allocations can be reclaimed together, such as the data
-// produced for a frame or level. Use the heap when allocations need to be
-// released individually.
+// Tracking reports heap allocations by tag and arena requests since begin().
+// EMBER_MEMORY_TRACKING selects detailed tracking (2), counters (1), or none (0).
 //
-// Tracking builds count every heap allocation by tag, sum what the arenas have
-// handed out since they last began, and report both beside the partition map.
-// Shutdown lists whatever the heap still holds. EMBER_MEMORY_TRACKING in
-// macros.h sets the level: 2 for debug builds, 1 for profiling, 0 for shipping.
-//
-// Allocations must stay within the module's lifetime. In particular, static
-// objects must not retain heap storage past shutdown().
-//
-// Allocation sizes use size_t to match the standard library's allocator
-// interface and the platform memory APIs.
+// Allocate only between initialize() and shutdown(). Static objects must release
+// any heap storage before shutdown().
 
 #include <ember/core/enum.h>
 #include <ember/core/macros.h>
@@ -54,9 +40,7 @@ namespace ember::memory
 		// Larger blocks reduce refills but can leave more space unused.
 		u64 block_size = 2_mb;
 
-		// Capacity for fiber stacks and their guard pages. The job system takes
-		// its stacks from here when it stats; the default holds 160 fibers of
-		// 256 KiB with room to spare. Zero leaves the job system no stacks.
+		// Capacity for fiber stacks and their guard pages. Zero disables stack allocation.
 		u64 stack_capacity = 64_mb;
 
 		// Optional heap for tools and retail overflow. Zero disables it.
@@ -64,9 +48,8 @@ namespace ember::memory
 		u64 development_capacity = EMBER_MEMORY_TRACKING >= 1 ? 256_mb : 0;
 	};
 
-	// Allocator usage for one region. Heap usage includes per-allocation
-	// overhead; block usage counts whole blocks. These figures describe
-	// allocator usage rather than physical page residency.
+	// Heap usage includes allocator overhead; block usage counts whole blocks.
+	// These figures do not measure physical page residency.
 	struct RegionStats
 	{
 		u64 used_bytes = 0;
@@ -91,10 +74,9 @@ namespace ember::memory
 		bool overflowed = false;
 	};
 
-	// Reserves the memory map, initializes its allocators, and registers the
-	// calling thread for arena allocation. Returns false if setup fails.
+	// Reserves the partitions and registers the calling thread for arena allocation.
 	// Call before other memory use, with no concurrent memory API calls.
-	// Initialization failures are logged.
+	// Logs setup failures and returns false.
 	bool initialize(const MemoryDef& def = {});
 
 	// Reports outstanding heap allocations, then releases the reservation.
@@ -111,14 +93,11 @@ namespace ember::memory
 	// The shared block heap used by arenas between initialize() and shutdown().
 	BlockHeap* block_heap();
 
-	// Takes [size] bytes from the stack partition, rounded up to whole pages. The
-	// range is page-aligned and committed; the caller lays out its stacks and decommits
-	// the guard page below each one. Returns null when the partition cannot hold the
-	// request.
+	// Returns a page-aligned, committed range, or null if the partition is full.
+	// Size rounds up to whole pages. The caller decommits each stack's guard page.
 	u8* allocate_stacks(size_t size);
 
-	// Returns a range from allocate_stacks(), most recent first, and commits it
-	// again, guard pages included, so the next caller starts from the same state.
+	// Returns ranges most recent first and recommits their guard pages for reuse.
 	void free_stacks(u8* stacks, size_t size);
 
 	// Reads partition usage and capacities for telemetry. Regions are sampled
@@ -166,8 +145,7 @@ namespace ember::memory
 	// Does nothing at tracking level 0.
 	void report();
 
-	// Reports outstanding heap allocations and returns their count. Call after
-	// owners have released their memory to use this as a leak report.
+	// Reports outstanding heap allocations. Call after owners release their memory.
 	// Level 2 lists individual blocks and available source locations; level 1
 	// groups them by tag. Returns zero at tracking level 0.
 	u32 report_leaks();

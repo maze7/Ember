@@ -1,18 +1,11 @@
 #pragma once
 
-// Input device state for a frame. The platform folds the OS's events into a pending snapshot
-// between pumps and publishes it as the frame's InputState, so the game polls plain data once a
-// frame and never handles an event. Buttons are bits in words: down is the current state, pressed
-// and released are the edges this frame. The edges are set as the events arrive rather than derived
-// from last frame's state, so a tap that begins and ends inside one frame still counts once.
+// Input snapshots copied into each frame record. Button edges accumulate from events, so a
+// press and release within one frame both survive. The next pump clears edges, motion and text.
 //
-// Axes are normalized the way the binding layer expects them: sticks in [-1, 1], triggers in
-// [0, 1], the mouse position in pixels of its window and its motion in points. The time is the
-// engine's clock (now_ns()), taken when the pump ran for the frame. An events age within a frame
-// is not kept. Text is UTF-8 the frame typed, and what does not fit is dropped.
-//
-// The snapshot is plain data of a few hundred bytes, so a frame record copies it by value and the
-// frame ring keeps what each frame saw.
+// Stick axes use [-1, 1], triggers use [0, 1], mouse position uses window pixels and motion uses
+// desktop points. Timestamps use now_ns() at the pump; individual events are not timestamped.
+// Text is UTF-8, and input beyond the fixed text capacity is dropped.
 
 #include <ember/core/types.h>
 #include <ember/math/scalar.h>
@@ -205,7 +198,7 @@ namespace ember
 		Count,
 	};
 
-	// Buttons by postion, as SDL names them.
+	// Physical button positions, independent of the labels printed on a gamepad.
 	enum class GamepadButton : u8
 	{
 		South,
@@ -247,8 +240,7 @@ namespace ember
 	// A stick deflection below this is noise, and does not count as the player using the pad.
 	inline constexpr f32 GAMEPAD_NOISE = 0.1f;
 
-	// One of the four pads, by slot. A slot keeps its number while the pad is plugged in, and is
-	// given to the next padonce it is gone.
+	// A slot is stable while connected and may be reused after disconnection.
 	struct Gamepad
 	{
 		u16 down_bits = 0;
@@ -307,8 +299,7 @@ namespace ember
 		WindowHandle focus;
 		WindowHandle close_requested;
 
-		// When the keyboard and the mouse last did anything, for telling which device the player
-		// is holding.
+		// Last activity times, used to choose keyboard or gamepad prompts.
 		u64 keyboard_ns = 0;
 		u64 mouse_ns = 0;
 
@@ -363,8 +354,7 @@ namespace ember
 			return down(Key::LeftAlt) || down(Key::RightAlt);
 		}
 
-		// Whether a pad was used more recently than the keyboard and the mouse, for choosing
-		// button prompts.
+		// Chooses gamepad prompts only after more recent gamepad activity.
 		bool gamepad_in_use() const
 		{
 			const u64 desk = max(keyboard_ns, mouse_ns);

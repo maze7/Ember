@@ -16,18 +16,15 @@ namespace ember::thread
 	namespace
 	{
 	#if defined(__APPLE__)
-		// macOS refuses a name past sixty-three characters, Linux past fifteen, rather than
-		// cutting it, so set_name() cuts it first.
+		// Truncate first: pthread_setname_np rejects names beyond the platform limit.
 		constexpr size_t NAME_LIMIT = 63;
 	#else
 		constexpr size_t NAME_LIMIT = 15;
 	#endif
 
 	#if defined(__linux__)
-		// The processors the process may run on, which taskset, a container's cpuset or a
-		// launcher may have narrowed from the machine's. Read once, from the main thread's
-		// mask: a thread inherits the mask of the thread that started it, so a pinned worker's
-		// own mask, or one inherited from it, would say one processor.
+		// Use the process leader's allowed CPUs, including taskset and container restrictions.
+		// Reading a pinned worker's mask would incorrectly report only its assigned processor.
 		const cpu_set_t& allowed()
 		{
 			static const cpu_set_t s_allowed = []
@@ -69,7 +66,6 @@ namespace ember::thread
 		cut[length] = '\0';
 
 	#if defined(__APPLE__)
-		// macOS names only the calling thread, so there is no thread to pass.
 		(void)pthread_setname_np(cut);
 	#else
 		(void)pthread_setname_np(pthread_self(), cut);
@@ -81,8 +77,7 @@ namespace ember::thread
 	bool set_affinity(u32 processor)
 	{
 	#if defined(__linux__)
-		// The [processor]th processor the process may run on, which on a machine nobody
-		// narrowed is processor [processor] itself.
+		// Processor indices are relative to the allowed set, which may contain gaps.
 		const cpu_set_t& set = allowed();
 		u32 seen = 0;
 
@@ -106,8 +101,7 @@ namespace ember::thread
 
 		return false;
 	#else
-		// macOS has no way to pin a thread: its affinity policy is a hint about which threads
-		// share a cache, and Apple silicon ignores even that.
+		// macOS affinity policies do not provide CPU pinning.
 		(void)processor;
 		return false;
 	#endif

@@ -252,8 +252,7 @@ namespace ember::memory
 		debug->number = 0;
 		std::memcpy(payload + size, &internal::TRAILING_GUARD, sizeof(internal::TRAILING_GUARD));
 
-		// A recognizable fill makes unwritten memory easier to spot than values
-		// left by an old object.
+		// Mark unwritten payloads for the debugger.
 		std::memset(payload, 0xCD, size);
 #else
 		(void)where;
@@ -272,8 +271,7 @@ namespace ember::memory
 
 	void* reallocate(Tag tag, void* ptr, size_t size, std::source_location where)
 	{
-		// Rebuild the allocation so its alignment and headers follow the normal path.
-		// An existing block keeps its tag; tag is only used when ptr is null.
+		// Existing blocks keep their tag. A new block uses the normal alignment.
 		if (ptr == nullptr)
 		{
 			return allocate(tag, size, DEFAULT_ALIGNMENT, where);
@@ -368,9 +366,6 @@ namespace ember::memory
 
 	namespace
 	{
-		// The shared Allocator object for heap clients. Tags arrive with each request,
-		// so callers can charge different subsystems without keeping a separate
-		// allocator object for each one.
 		class HeapAllocator final : public Allocator
 		{
 		public:

@@ -16,7 +16,7 @@ namespace ember
 		return a < b ? b : a;
 	}
 
-	// Limits [value] to [low, high]. [low] must not exceed [high].
+	// low must not exceed high.
 	template <typename T>
 	EMBER_FINLINE constexpr T clamp(T value, T low, T high)
 	{

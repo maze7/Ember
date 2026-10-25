@@ -12,12 +12,10 @@
 
 namespace ember::gpu::vk
 {
-	// Vulkan 1.3 puts dynamic rendering, synchronization2, timeline semaphores, descriptor
-	// indexing, and host query reset in the core API. Feature bits are still checked at boot.
+	// Required features are core in 1.3, but their feature bits still need checking at boot.
 	inline constexpr u32 API_VERSION = VK_API_VERSION_1_3;
 
-	// Keep this table in TextureFormat order for direct lookup. Aspect selection comes from
-	// FormatInfo, so the table only needs the native format.
+	// Keep in TextureFormat order for direct lookup.
 	inline constexpr VkFormat VK_FORMATS[] = {
 	    VK_FORMAT_UNDEFINED,
 	    VK_FORMAT_R8_UNORM,
@@ -57,8 +55,7 @@ namespace ember::gpu::vk
 		return VK_FORMATS[(u32)format];
 	}
 
-	// Swapchain creation uses the reverse lookup to match a native format. Unknown formats return
-	// Undefined; the forward lookup remains a direct index.
+	// Unknown native formats return Undefined.
 	inline TextureFormat from_vk(VkFormat format)
 	{
 		for (u32 i = 1; i < (u32)TextureFormat::Count; ++i)
@@ -77,7 +74,6 @@ namespace ember::gpu::vk
 		return format_info(format).depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 	}
 
-	// Sampler comparison and pipeline depth tests share the same translation.
 	inline VkCompareOp to_vk(CompareOp op)
 	{
 		switch (op)
@@ -104,8 +100,7 @@ namespace ember::gpu::vk
 		return VK_COMPARE_OP_ALWAYS;
 	}
 
-	// Give common results readable names in diagnostics. Unlisted results return VK_RESULT_?;
-	// callers that need the exact value must also log the numeric result.
+	// Unlisted results return VK_RESULT_?; also log the number when the exact result matters.
 	inline const char* result_name(VkResult result)
 	{
 		switch (result)

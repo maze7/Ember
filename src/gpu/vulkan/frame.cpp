@@ -1,12 +1,7 @@
-// Gives each frame a reusable slot for its command lists, uploads, and pending presents.
-// begin_frame() waits before reusing that storage; end_frame() closes it to further recording
-// and submission. The slot records the last timeline value submitted to each queue, and the
-// frame loop's fiber alone turns a closed slot into a complete one and, through wait_oldest(),
-// hands the frame back for retirement, so completion never races a slot's reuse. Jobs record,
-// upload, submit and wait on queue points; a submit carries the frame's pending uploads first.
-//
-// Resource destruction uses those frame completions too. Handles retire immediately, while
-// native objects and descriptor slots wait in the graveyard until their frame stamp can pass.
+// Frame slots retain command lists, uploads and pending presents until their queue values pass.
+// Only the frame loop's fiber completes slots and returns frames for retirement, preventing
+// completion from racing reuse. Resource handles retire immediately; native objects and
+// descriptor slots wait for the frames that could use them.
 
 #include <ember/gpu/gpu.h>
 
@@ -66,8 +61,7 @@ namespace ember::gpu
 			wait.result = vkDeviceWaitIdle(wait.device);
 		}
 
-		// Clear recording state for the next frame while keeping the preallocated native objects
-		// and the list's place in the slot.
+		// Preserve preallocated native objects and the list's place in the slot.
 		void reset_list(CommandList& list)
 		{
 			list = CommandList{.pool = list.pool,
@@ -82,8 +76,7 @@ namespace ember::gpu
 			return (u32)(&slot - b.slots);
 		}
 
-		// Lists the slot has opened in one queue's table, capped at the table's capacity because
-		// the counter keeps climbing past it.
+		// Failed claims still increment opened, so cap it at the table's capacity.
 		u32 opened_count(const vk::Backend& b, const vk::Slot& slot, u32 queue)
 		{
 			return min(slot.opened[queue].load(std::memory_order_acquire),
@@ -103,8 +96,7 @@ namespace ember::gpu
 			return true;
 		}
 
-		// Collect timestamp pairs for one list after the frame's GPU work has finished. The query
-		// results provide durations; names and nesting stayed with the command list on the CPU.
+		// Read timestamp pairs only after the frame's GPU work finishes.
 		void resolve_list_zones(vk::Backend& b, vk::Slot& slot, const CommandList& list)
 		{
 			if (list.zone_count == 0)
@@ -155,9 +147,8 @@ namespace ember::gpu
 			resolve_list_zones(b, slot, slot.finish);
 		}
 
-		// Turn a Closed slot whose queue values have passed into Complete: resolve its zones and
-		// end its Stage::Gpu. Only the frame loop's fiber calls this, so nothing can claim or
-		// reuse the slot meanwhile; other threads only read the state.
+		// Only the frame loop's fiber may finish a slot. Publish Complete after zones and
+		// Stage::Gpu are resolved so readers cannot observe a partially completed frame.
 		void finish_slot(vk::Backend& b, vk::Slot& slot)
 		{
 			EMBER_ASSERT(jobs::is_main());
@@ -168,7 +159,6 @@ namespace ember::gpu
 			slot.state.store(vk::SlotState::Complete, std::memory_order_release);
 		}
 
-		// Wait for a Closed slot's GPU work and complete it.
 		void wait_slot(vk::Backend& b, vk::Slot& slot)
 		{
 			for (u32 i = 0; i < b.ctx.queue_count; ++i)
@@ -179,9 +169,8 @@ namespace ember::gpu
 			finish_slot(b, slot);
 		}
 
-		// Move the slot's pending acquire semaphores into a submission's wait list. The caller
-		// holds the queue lock, so the submission taking them is the first on the queue after
-		// acquisition, and everything later in submission order is ordered behind them too.
+		// Hold the queue lock through submission so this consumes acquire waits before later
+		// queue work. slot.lock protects acquisition's concurrent appends.
 		u32 take_acquire_waits(vk::Slot& slot, VkSemaphoreSubmitInfo* waits)
 		{
 			slot.lock.lock();
@@ -199,10 +188,8 @@ namespace ember::gpu
 			return count;
 		}
 
-		// Apply the backbuffer states the lists recorded to the slot's pending presents, in the
-		// order the lists are being submitted. The caller holds the queue lock, so that order is
-		// the one the GPU will see. An entry with no pending present names an image this frame
-		// did not acquire and is ignored.
+		// Hold the queue lock so states follow submission order. Ignore images this frame did
+		// not acquire; only its pending presents need final transitions.
 		void fold_backbuffer_states(vk::Slot& slot, Span<CommandList* const> lists)
 		{
 			slot.lock.lock();
@@ -224,9 +211,8 @@ namespace ember::gpu
 			slot.lock.unlock();
 		}
 
-		// Send the frame's open upload batch on the graphics queue by itself, if there is one, and
-		// return the point covering every upload recorded so far. The caller holds the graphics
-		// queue lock, so a batch another thread's call swept up first is covered as well.
+		// Hold the graphics queue lock. The returned point also covers batches flushed by
+		// earlier concurrent callers, even when this call finds no open batch.
 		u64 submit_uploads_locked(vk::Backend& b, vk::Slot& slot, vk::QueueState& queue,
 		    u32 queue_index)
 		{
@@ -259,8 +245,8 @@ namespace ember::gpu
 			return slot.upload_value;
 		}
 
-		// Descriptor slots must be reset before their indices return to the pool. Do both under
-		// resources_lock so creation cannot reuse an index halfway through its reset.
+		// Descriptor slots need reset and pool release under resources_lock, preventing creation
+		// from reusing an index before its descriptor reset.
 		bool is_slot(vk::Dead::Kind kind)
 		{
 			return kind == vk::Dead::Kind::TextureSlot || kind == vk::Dead::Kind::BufferSlot ||
@@ -289,8 +275,7 @@ namespace ember::gpu
 			}
 		}
 
-		// Driver destruction can take time, so release native objects after dropping the graveyard
-		// lock. CPU allocations retired with the resource follow the same path.
+		// Release outside resources_lock because driver destruction can take time.
 		void release_native(vk::Backend& b, const vk::Dead& dead)
 		{
 			const VkAllocationCallbacks* callbacks = &b.ctx.callbacks;
@@ -425,9 +410,7 @@ namespace ember::gpu
 
 		void run_blocking(jobs::JobFn fn, void* data, const char* name)
 		{
-			// Let an I/O thread do the blocking call while a scheduler fiber waits on its counter.
-			// Without an available I/O lane, or outside the scheduler, the caller does the work
-			// itself.
+			// Keep workers available while the driver blocks. Failed I/O dispatch falls back below.
 			if (jobs::worker_index() != jobs::NO_WORKER)
 			{
 				jobs::Counter done;
@@ -454,8 +437,7 @@ namespace ember::gpu
 				return;
 			}
 
-			// Check the timeline before scheduling a blocking wait. The GPU may already have caught
-			// up while the CPU was doing other work.
+			// Avoid an I/O task if the GPU has already passed this point.
 			u64 seen = 0;
 			if (vkGetSemaphoreCounterValue(b.ctx.device, queue.timeline, &seen) == VK_SUCCESS)
 			{
@@ -532,8 +514,7 @@ namespace ember::gpu
 					++b.graveyard_head;
 				}
 
-				// Drop the consumed prefix occasionally instead of shifting survivors after every
-				// drain. An empty graveyard can keep its allocation for the next frame.
+				// Amortize survivor shifts and keep the allocation for later retirements.
 				if (b.graveyard_head == b.graveyard.size())
 				{
 					b.graveyard.clear();
@@ -584,9 +565,8 @@ namespace ember::gpu
 		    "a frame numbered outside the device's slots");
 		vk::Slot& slot = b->slots[frame.slot];
 
-		// Reusing a slot is the last point where its previous frame can finish. The loop should
-		// have taken that frame through wait_oldest() already; wait here too before resetting
-		// command pools, query slots, and mapped ring storage.
+		// The loop should already have returned the old frame through wait_oldest(). Wait
+		// here too before resetting any storage its GPU work could still use.
 		const vk::SlotState previous = slot.state.load(std::memory_order_acquire);
 		EMBER_ASSERT_MSG(previous != vk::SlotState::Open, "begin_frame over a frame still open");
 		if (previous == vk::SlotState::Closed)
@@ -677,8 +657,7 @@ namespace ember::gpu
 			}
 		}
 
-		// Use the slot's private list for the acquired images' final transitions. It also clears
-		// an image that the frame left unused.
+		// Final transitions and unused-image clears need no caller-provided list.
 		CommandList& finish = slot.finish;
 		finish.frame_index = frame.index;
 		finish.open = true;
@@ -712,8 +691,7 @@ namespace ember::gpu
 
 		queue.lock.lock();
 
-		// Uploads nobody submitted ride ahead of the finish list, taken under the queue lock like
-		// submit_uploads() takes them, so nothing can reach the queue between the two.
+		// Flush remaining uploads before the finish list, under the same queue lock.
 		VkCommandBufferSubmitInfo commands[2];
 		u32 command_count = 0;
 		if (const VkCommandBuffer uploads = vk::flush_uploads(slot); uploads != VK_NULL_HANDLE)
@@ -773,9 +751,8 @@ namespace ember::gpu
 
 		EMBER_ASSERT_MSG(jobs::is_main(), "frames are driven from the frame loop's fiber");
 
-		// Frames are numbered in order and retired in order, so the oldest frame still held is
-		// the one whose slot the next frame takes. A slot that is Open belongs to the frame being
-		// recorded and is never the one to hand back.
+		// Ordered frame retirement returns the slot needed by the next frame. Open slots still
+		// belong to recording and cannot be returned.
 		vk::Slot* oldest = nullptr;
 		for (u32 i = 0; i < b->ctx.in_flight; ++i)
 		{
@@ -844,9 +821,8 @@ namespace ember::gpu
 		};
 		EMBER_VK_CHECK(vkBeginCommandBuffer(list.commands, &begin));
 
-		// Start each bind point the queue supports with the shared heap and offsets into the
-		// zeroed constant block. Later set_constants() calls replace those offsets lazily. A
-		// transfer queue has no bind points.
+		// Initialize supported bind points with the shared heap and zeroed constant block.
+		// set_constants() changes offsets lazily. Transfer queues have no bind points.
 		if (queue != Queue::Transfer)
 		{
 			const VkDescriptorSet sets[] = {b->heap.set, b->heap.constants};
@@ -942,10 +918,8 @@ namespace ember::gpu
 		vk::QueueState& graphics = vk::queue_for(*b, Queue::Graphics);
 		const u32 queue_index = b->ctx.queue_index[(u32)def.queue];
 
-		// Uploads recorded so far reach the GPU first. On a separate queue they are sent on the
-		// graphics queue now and this submission waits on their point; on the graphics queue's
-		// own native queue the batch rides ahead of the lists, taken under the queue lock below
-		// so nothing reaches the queue between the two.
+		// Separate queues wait on the graphics upload point. A shared graphics queue instead
+		// submits uploads before these lists under one queue lock.
 		VkCommandBuffer uploads = VK_NULL_HANDLE;
 		if (&queue != &graphics)
 		{
@@ -967,10 +941,8 @@ namespace ember::gpu
 
 		queue.lock.lock();
 
-		// A graphics submission consumes the pending acquire semaphores, so its image accesses
-		// wait for acquisition, and records the states its lists leave the acquired images in.
-		// Both happen under the queue lock because both must follow submission order rather than
-		// the order in which callers reached this function.
+		// Consume acquire waits and fold image states under the queue lock so both follow
+		// submission order, which can differ from the order callers entered this function.
 		if (def.queue == Queue::Graphics)
 		{
 			wait_count += take_acquire_waits(slot, waits + wait_count);

@@ -1,5 +1,5 @@
 // x86-64 System V context switch for ember fibers.
-// Context layout, must match FiberContext in fiber_posix.cpp:
+// Context layout must match Registers in fiber_posix.cpp:
 //   0 rsp   8 rip   16 rbx   24 rbp   32 r12   40 r13   48 r14   56 r15
 //   64 mxcsr (32 bit)   68 x87 control word (16 bit)
 

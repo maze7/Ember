@@ -1,7 +1,7 @@
 #pragma once
 
-// Object construction lives here so callers that only need new_object or
-// Unique do not have to include the rest of the memory module.
+// Constructs objects through an Allocator. Deletion must use the same allocator
+// and the original object type so the size and alignment match.
 
 #include <ember/memory/allocator.h>
 #include <ember/memory/tag.h>
@@ -14,12 +14,10 @@
 
 namespace ember::memory
 {
-	// Allocates and constructs a T. Construction must not throw. Allocation
-	// failure stops the process, so a returned pointer refers to a live object.
+	// Construction must not throw. Allocation failure stops the process.
 	//
-	// Destroy it with delete_object through the same allocator. This helper
-	// passes an empty source location, so detailed leak reports identify the
-	// allocation by its tag and allocation number.
+	// Detailed leak reports identify these allocations by tag and allocation
+	// number; this helper passes no source location.
 	template <typename T, typename... Args>
 	[[nodiscard]] T* new_object(Allocator* allocator, Tag tag, Args&&... args) noexcept
 	{

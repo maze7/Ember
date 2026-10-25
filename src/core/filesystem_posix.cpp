@@ -1,6 +1,5 @@
-// The POSIX half of the file system: every public function that is one system call deep, for
-// Linux and macOS. Paths are checked against the engine's contract here, copied onto the stack
-// with a NUL for the system, and never allocated.
+// Linux and macOS file primitives. Validate engine paths before copying them into
+// NUL-terminated stack buffers for OS calls.
 
 #if !defined(_WIN32)
 
@@ -29,7 +28,6 @@ namespace ember::fs
 {
 	namespace
 	{
-		// errno, sorted into the codes callers branch on.
 		FileError classify(int value)
 		{
 			switch (value)
@@ -80,8 +78,7 @@ namespace ember::fs
 			}
 		}
 
-		// The portable code for a system error. One the table has no name for is logged with its
-		// number, which is all a reader of the log could use.
+		// Preserve unexpected errno values in the log when no portable error describes them.
 		FileError posix_error(int value)
 		{
 			const FileError error = classify(value);
@@ -98,9 +95,8 @@ namespace ember::fs
 			return posix_error(errno);
 		}
 
-		// The system wants a C string and a StringView has none: the engine's path, checked,
-		// copied onto the stack with its NUL. A drive root means nothing here and is refused,
-		// rather than made a directory named "C:".
+		// Convert views to NUL-terminated OS paths on the stack. Reject drive roots rather than
+		// treating "C:" as a POSIX directory name.
 		struct CPath
 		{
 			char text[MAX_PATH_BYTES];
@@ -123,7 +119,7 @@ namespace ember::fs
 			}
 		};
 
-		// A descriptor in a File, one up, so that zero stays "no file" while stdin is zero.
+		// Offset descriptors by one so File{} stays null even when open() returns descriptor zero.
 		int fd_of(File file)
 		{
 			return (int)file.handle - 1;
@@ -180,8 +176,7 @@ namespace ember::fs
 			return {};
 		}
 
-		// Gives a system path to the caller's String in the engine's spelling: no trailing
-		// separator but the root's.
+		// Remove trailing separators except at the root, matching the public path contract.
 		void give(String& out, const char* text, size_t length)
 		{
 			while (length > 1 && text[length - 1] == '/')
@@ -220,7 +215,6 @@ namespace ember::fs
 			return {};
 		}
 
-		// The home directory with [child] under it.
 		Result<void, FileError> home_child(StringView child, String& out)
 		{
 			if (auto home = home_directory(out); !home)
@@ -232,8 +226,7 @@ namespace ember::fs
 			return {};
 		}
 
-		// A user directory the XDG way: the variable when it is set and absolute, else home
-		// plus the child the specification names.
+		// XDG variables must be absolute; otherwise use the specified home-directory fallback.
 		Result<void, FileError> xdg_directory(const char* variable, StringView child, String& out)
 		{
 			const char* configured = std::getenv(variable);
@@ -315,9 +308,8 @@ namespace ember::fs
 			return {};
 		}
 
-		// Cleared first, so a failed close is not tried again, and not retried on EINTR: the
-		// descriptor is gone either way, and a retry could close one another thread has since
-		// been given.
+		// Invalidate the File before closing. Do not retry EINTR: on systems that already released
+		// the descriptor, another thread may have reused its number.
 		const int fd = fd_of(std::exchange(file, File{}));
 		if (::close(fd) != 0)
 		{
@@ -344,8 +336,7 @@ namespace ember::fs
 	{
 		EMBER_ASSERT(file);
 
-		// Offsets come from pack tables, which are data: a range that wraps is an error, not a
-		// bug.
+		// File offsets may come from external data, so reject overflow as an I/O error.
 		if (into.size() > std::numeric_limits<u64>::max() - offset ||
 		    offset > (u64)std::numeric_limits<off_t>::max())
 		{
@@ -633,8 +624,7 @@ namespace ember::fs
 	Result<void, FileError> executable_directory(String& out)
 	{
 	#if defined(__APPLE__)
-		// The path the loader has may be relative or go through a link; realpath settles it,
-		// and wants PATH_MAX, which the buffer covers.
+		// Resolve the loader's relative or symlinked path. realpath needs PATH_MAX room.
 		static_assert(MAX_PATH_BYTES >= PATH_MAX);
 
 		char executable[MAX_PATH_BYTES];
@@ -659,7 +649,7 @@ namespace ember::fs
 			return last_error();
 		}
 
-		// A full buffer means the link was cut to fit, and the path is not the whole path.
+		// readlink does not terminate the path; a full buffer may mean truncation.
 		if ((size_t)read >= sizeof(buffer) - 1)
 		{
 			return FileError::NameTooLong;

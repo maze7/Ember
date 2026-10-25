@@ -1,24 +1,13 @@
 #pragma once
 
-// Ember's job system is fiber based and loosely follows the design presented by Christian Gyrling
-// in his 2015 GDC talk on paralleliziing the Naughty Dog engine. A job is a function and a pointer.
-// Kicking jobs adds them to a Counter the caller owns, finishing a job subtracts one from the
-// Counter, and waiting parks the calling fiber until the counter reaches zero while the worker runs
-// other jobs.
+// Fiber jobs based on Christian Gyrling's 2015 GDC design. Counters join work by parking the
+// waiting fiber while its worker runs other jobs. Job data and counters remain caller-owned.
 //
-// Waiting on a counter is the only way to synchronize jobs, and a job may wait anywhere, deep in a
-// call stack or in the middle of a loop, because its stack its fiber's and nobody else's.
+// Main resumes on worker 0, the thread that initialized the scheduler. Other fibers may migrate:
+// re-read thread-local state after a wait, and never hold a spin lock or thread-owned mutex
+// across one. Use JobMutex for contention that should park a fiber.
 //
-// A thread is the execution unit and a fiber is the context. Worker 0 is the thread that called
-// initialize(); its own stack is main's fiber, and main always resumes on Worker 0, so the platform
-// layer remains on the owning thread. Every other fiber resumes on whichever worker is free, so a
-// job must not keep thread-affine state, a thread-local it read before a wait, or a lock a wait.
-// System primitives that remember their thread (a mutex or a condition variable) are not allowed
-// inside jobs at all: A JobMutex should be used instead.
-//
-// Work that blocks belongs on an IO thread outside of the scheduler. This way, file, sockets and
-// system-call threads never block a worker. IO threads wait on their work and signal a Counter to
-// communicate with the job system when their work is complete.
+// Blocking operations belong on I/O threads through kick_io(), never on a worker.
 
 #include <ember/containers/span.h>
 #include <ember/core/macros.h>
@@ -34,9 +23,8 @@ namespace ember::jobs
 	// Returned by worker_index() on a thread outside the scheduler.
 	inline constexpr u32 NO_WORKER = ~0u;
 
-	// Which jobs workers drain first. Priority affects latency, not completion: sustained High
-	// traffic delays Normal and Low work. Reserve High for short jobs that unblock the frame, and
-	// use Low for work whose delay cannot stall it. There is no stealing between queues.
+	// Workers drain higher priorities first. Sustained High traffic can starve lower queues;
+	// reserve it for short jobs that unblock the frame.
 	enum class JobPriority : u8
 	{
 		High,
@@ -45,8 +33,7 @@ namespace ember::jobs
 		Count
 	};
 
-	// Defines a single job. [data] is borrowed and must outlive the job, [name] is for the profiler
-	// and the debugger, where the fiber running the job is named after it.
+	// data and the profiler/debugger name are borrowed until the job returns.
 	struct JobDef
 	{
 		JobFn fn = nullptr;
@@ -55,9 +42,8 @@ namespace ember::jobs
 		JobPriority priority = JobPriority::Normal;
 	};
 
-	// Work not finished yet, owned by the caller. kick() adds the jobs it kicks, each job subtracts
-	// itself when it returns, and wait() returns once the count is zero. Several kicks may share
-	// one counter, and a job may kick more work onto the counter its parent waits on.
+	// Caller-owned completion count. Several kicks may share it, including work kicked by a job
+	// already counted here. Keep it alive until the count is zero and every waiter has returned.
 	class alignas(EMBER_CACHE_LINE) Counter final
 	{
 	public:
@@ -74,7 +60,7 @@ namespace ember::jobs
 		Counter(const Counter&) = delete;
 		Counter& operator=(const Counter&) = delete;
 
-		// True once every completion landed, with the job's writes visible. Any thread.
+		// A completed count makes the finished jobs' writes visible. Callable from any thread.
 		bool is_complete() const
 		{
 			return m_remaining.load(std::memory_order_acquire) == 0;
@@ -90,10 +76,8 @@ namespace ember::jobs
 	static_assert(sizeof(Counter) == EMBER_CACHE_LINE,
 	    "one line per counter, so completions never false share");
 
-	// A lock a job may hold for longer than a spin, for a critical section that computes rather
-	// than one that takes a few loads and stores. A job that finds it taken spins briefly, then
-	// parks its fiber and lets the worker fun something else, and unlock() wakes it. Any thread may
-	// take it; a thread outside the scheduler spins, having no fiber to park.
+	// Spins briefly, then parks a contending scheduler fiber. Threads outside the scheduler
+	// keep spinning because they have no fiber to park.
 	class alignas(EMBER_CACHE_LINE) JobMutex final
 	{
 	public:
@@ -115,14 +99,11 @@ namespace ember::jobs
 
 	struct JobsDef
 	{
-		// Threads that run jobs, worker 0 included. Zero derives it from the hardware thread count
-		// less [reserved_threads], which are left to the system, the IO threads and whatever else
-		// the machine runs.
+		// Includes worker 0. Zero selects hardware_count() minus reserved_threads, at least one.
 		u32 worker_count = 0;
 		u32 reserved_threads = 1;
 
-		// Locks each worker to a core. Off on desktop by default, where the system schedules around
-		// other work. Intended for consoles.
+		// Pin workers to logical processors instead of leaving placement to the OS.
 		bool pin_workers = false;
 
 		// Jobs that may be running or parked at once, and the stack each one gets.
@@ -135,13 +116,12 @@ namespace ember::jobs
 		// A wait with no fiber and no progress for this long dumps and fails. Zero never fails.
 		u32 stall_report_ms = 1000;
 
-		// Threads that run submit_io() tasks, and the tasks queued at once per priority. Zero
-		// threads disables submit_io(); more let reads overlap on a device that can.
+		// I/O threads and queued tasks per priority. Zero threads disables kick_io().
 		u32 io_threads = 1;
 		u32 io_queue_capacity = 1024;
 	};
 
-	// The half-open index range one job of a parallel_for covers, and that job's index in the split
+	// One parallel_for partition: [begin, end) and its index in the split.
 	struct JobRange
 	{
 		u32 begin = 0;
@@ -161,7 +141,7 @@ namespace ember::jobs
 
 	struct ParallelForDef
 	{
-		// Items, indexed [0, count), and how many one job is worth, which sets the job count.
+		// Item count and target items per job. MAX_RANGE_JOBS bounds the split.
 		u32 count = 0;
 		u32 grain = 1;
 
@@ -191,9 +171,9 @@ namespace ember::jobs
 	// must be complete, and this runs on the thread that initialized, outside any job.
 	void shutdown();
 
-	// Kicks jobs. With a counter, every job is added to it before any can start and subtracts
-	// itself when it finishes. Without one the jobs are fire and forget. Any thread, a job or an
-	// IO thread included; a full queue is fatal.
+	// Adds the batch to counter before publishing any job; each return completes one count.
+	// Without a counter, the caller must track data lifetime separately. Any thread may kick;
+	// a full queue is fatal.
 	void kick(Span<const JobDef> jobs, Counter* counter = nullptr);
 
 	inline void kick(const JobDef& job, Counter* counter = nullptr)
@@ -201,16 +181,15 @@ namespace ember::jobs
 		kick(Span<const JobDef>(&job, 1), counter);
 	}
 
-	// parks the calling job, or main, until the counter reaches zero. A thread outside the
-	// scheduler has no fiber to park, so it polls instead. Never call from an IO thread: nothing
-	// would serve its queue.
+	// Parks the calling fiber until zero. External threads poll. Never call from an I/O thread:
+	// blocking it can prevent the work needed to complete the counter.
 	void wait(Counter& counter);
 
 	// One completion from outside the scheduler. Signal exactly as many times as the pending count;
 	// the last one wakes every waiter.
 	void signal(Counter& counter);
 
-	// Why kick_io() refused a task, or None when it did not.
+	// Reasons kick_io() refused a task. Refusal adds no outstanding completion.
 	enum class IoKickError : u8
 	{
 		None = 0,
@@ -221,17 +200,15 @@ namespace ember::jobs
 		// Shutdown has begun; nothing more is accepted.
 		Stopping,
 
-		// More tasks in flight than the queue holds; back off and try again.
+		// The priority queue cannot accept another task; the caller may retry.
 		QueueFull,
 
 		Count
 	};
 
-	// Submit work for the IO thread(s). Designed for work that blocks on the operating system: file
-	// reads, a sockets, shader compiles, etc. Anything that would otherwise hold a worker for the
-	// duration. It runs on the IO thread's own stack, High priority first the same way workers
-	// drain. A task may kick jobs, signal counters and submit more tasks, but never wait: there is
-	// no fiber to park.
+	// Runs blocking work on an I/O thread's stack, in priority order. Accepted work adds one
+	// completion, signaled when the task returns. Keep data, name, and completion alive until then.
+	// A task may kick jobs, signal counters, or submit more I/O work, but must never wait().
 	[[nodiscard]] IoKickError kick_io(const JobDef& job, Counter& completion);
 
 	u32 worker_count();
@@ -245,18 +222,16 @@ namespace ember::jobs
 
 	JobStats stats();
 
-	// The deepest any fiber's stack has been, in bytes, found by scanning for the fill the stacks
-	// were given at initialize(). Only a tracking build knows it, and the scan touches every stack,
-	// so this is for a debug view only. The number stack_size is measured against; a fiber that
-	// reached its guard page has already faulted.
+	// Estimates stack high-water use by scanning fill bytes in tracking builds; zero otherwise.
+	// Stop stack writers before scanning. Use for diagnostics and sizing, away from hot paths.
 	u32 stack_high_water();
 
-	// Logs every fiber waiting on a counter or a mutex, for a hang you are looking at. Any thread.
+	// Logs parked fibers to diagnose hangs. Keep wait state stable: concurrent wakes can invalidate
+	// the counters being inspected.
 	void dump_state();
 
-	// A job over a callable the caller keeps alive until the job completes: the callable is the
-	// job's data and the thunk invokes it. A local lambda kicked and waited for in the same scope
-	// is the usual shape. Nothing is copied, so a temporary would dangle.
+	// Borrows a callable without copying it. Keep it alive until completion, for example by
+	// kicking and waiting in the same scope.
 	template <typename F>
 	[[nodiscard]] JobDef make_job(F& fn, const char* name = nullptr)
 	{
@@ -274,7 +249,7 @@ namespace ember::jobs
 	// one job per range and waits for all of them. Zero items kicks nothing.
 	void parallel_for(const ParallelForDef& def, RangeFn fn, void* data = nullptr);
 
-	// The callable form; fn(JobRange) is the job body and outlives the call by construction.
+	// Borrows fn(JobRange) until the joined call returns.
 	template <typename F>
 	void parallel_for(const ParallelForDef& def, F& fn)
 	{
