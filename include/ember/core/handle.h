@@ -65,5 +65,11 @@ namespace ember
 		}
 
 		constexpr bool operator==(const Handle&) const noexcept = default;
+
+		// Returns true if the handle is valid
+		constexpr operator bool() const noexcept
+		{
+			return !is_null();
+		}
 	};
 }

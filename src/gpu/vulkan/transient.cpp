@@ -5,8 +5,8 @@
 //
 // The transient buffer has a pool handle and storage descriptor for shader access. The staging
 // buffer stays private: upload() copies CPU data into it and records a transfer into the target.
-// submit_uploads() sends the recorded transfers to the graphics queue, and end_frame() sends
-// whatever is left.
+// submit() sends the recorded transfers ahead of its lists, submit_uploads() sends them on their
+// own, and end_frame() sends whatever is left.
 
 #include <ember/gpu/gpu.h>
 #include <ember/math/scalar.h>
@@ -375,11 +375,10 @@ namespace ember::gpu
 			return {};
 		}
 
-		vk::Slot& slot = vk::slot_of(*b, frame.index);
+		vk::Slot& slot = vk::slot_of(*b, frame);
 		EMBER_ASSERT_MSG(vk::is_open(slot), "transient memory for a frame that has ended");
 
-		const vk::RingSpan span =
-		    vk::ring_allocate(b->transient, (u32)(frame.index % b->ctx.in_flight), size, alignment);
+		const vk::RingSpan span = vk::ring_allocate(b->transient, frame.slot, size, alignment);
 		if (span.cpu == nullptr)
 		{
 			return {};
@@ -416,12 +415,11 @@ namespace ember::gpu
 			return false;
 		}
 
-		vk::Slot& slot = vk::slot_of(*b, frame.index);
+		vk::Slot& slot = vk::slot_of(*b, frame);
 		EMBER_ASSERT_MSG(vk::is_open(slot), "an upload for a frame that has ended");
 
-		const u32 slot_index = (u32)(frame.index % b->ctx.in_flight);
 		const vk::RingSpan stage =
-		    vk::ring_allocate(b->staging, slot_index, data.size(), STAGING_ALIGNMENT);
+		    vk::ring_allocate(b->staging, frame.slot, data.size(), STAGING_ALIGNMENT);
 		if (stage.cpu == nullptr)
 		{
 			return false;
@@ -495,13 +493,12 @@ namespace ember::gpu
 			return false;
 		}
 
-		vk::Slot& slot = vk::slot_of(*b, frame.index);
+		vk::Slot& slot = vk::slot_of(*b, frame);
 		EMBER_ASSERT_MSG(vk::is_open(slot), "an upload for a frame that has ended");
 
 		EMBER_ASSERT(STAGING_ALIGNMENT % format_info(cold.api_format).block_bytes == 0);
-		const u32 slot_index = (u32)(frame.index % b->ctx.in_flight);
 		const vk::RingSpan stage =
-		    vk::ring_allocate(b->staging, slot_index, data.size(), STAGING_ALIGNMENT);
+		    vk::ring_allocate(b->staging, frame.slot, data.size(), STAGING_ALIGNMENT);
 		if (stage.cpu == nullptr)
 		{
 			return false;

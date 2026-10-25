@@ -362,8 +362,9 @@ namespace ember::gpu::vk
 		// end_frame() uses this list to prepare acquired images for presentation.
 		CommandList finish;
 
-		// Keep the frame until its slot is reused. The state says what the slot allows: recording,
-		// uploads, acquisition and submission while Open, completion handling once Closed.
+		// The frame using the slot, held until wait_oldest() hands it back to the loop and nulls
+		// this. The state says what the slot allows: recording, uploads, acquisition and
+		// submission while Open, completion handling once Closed.
 		Frame* frame = nullptr;
 		u64 frame_index = 0;
 		std::atomic<SlotState> state{SlotState::Idle};
@@ -380,9 +381,9 @@ namespace ember::gpu::vk
 		VkSemaphore acquire_waits[MAX_SWAPCHAINS] = {};
 		u32 acquire_wait_count = 0;
 
-		// Serialize upload recording from any thread. submit_uploads() and end_frame() close and
-		// submit the open batch under the graphics queue lock, and upload_value, kept under that
-		// same lock, is the latest point covering every batch submitted so far.
+		// Serialize upload recording from any thread. submit(), submit_uploads() and end_frame()
+		// close and submit the open batch under the graphics queue lock, and upload_value, kept
+		// under that same lock, is the latest point covering every batch submitted so far.
 		SpinMutex upload_lock;
 		VkCommandPool upload_pool = VK_NULL_HANDLE;
 		VkCommandBuffer upload_batches[MAX_UPLOAD_BATCHES] = {};
@@ -469,7 +470,7 @@ namespace ember::gpu::vk
 		Context ctx;
 		GpuDef def;
 
-		// A frame uses slots[frame.index % in_flight] after the prior owner has finished.
+		// A frame uses slots[frame.slot] after the prior owner has finished.
 		Slot* slots = nullptr;
 
 		// Updated under resources_lock so frame starts and resource retirements receive a
@@ -519,7 +520,10 @@ namespace ember::gpu::vk
 	void set_name(const Context& ctx, VkObjectType type, u64 handle, const char* name);
 
 	QueueState& queue_for(Backend& backend, Queue queue);
-	Slot& slot_of(Backend& backend, u64 frame_index);
+
+	// The slot a frame uses, by Frame::slot, asserting that the device began that frame.
+	Slot& slot_of(Backend& backend, const Frame& frame);
+
 	void raise_completed(QueueState& queue, u64 value);
 
 	// Read each queue's timeline into its completed counter. Any thread.
@@ -534,7 +538,7 @@ namespace ember::gpu::vk
 	bool any_frame_open(const Backend& backend);
 
 	// Wait out every frame in flight, after which nothing is pending on any queue. Parks the
-	// caller like wait_frame(). Only legal with no frame open, on the frame loop's fiber.
+	// caller like wait_oldest(). Only legal with no frame open, on the frame loop's fiber.
 	void wait_frames(Backend& backend);
 
 	// Any thread may wait for a timeline value. Completed values return immediately; pending ones

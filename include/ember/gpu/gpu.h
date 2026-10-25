@@ -24,6 +24,8 @@
 #include <ember/math/geometry.h>
 #include <ember/platform/window.h>
 
+#include <type_traits>
+
 namespace ember::gpu
 {
 	struct CommandList;
@@ -210,6 +212,23 @@ namespace ember::gpu
 		u32 size = 0;
 	};
 
+	// A transient allocation seen as count values of T. first_element() is the index of
+	// data[0] when a shader reads the ring buffer as a StructuredBuffer<T>; it is exact
+	// because the offset is a multiple of sizeof(T).
+	template <typename T>
+	struct TransientArray
+	{
+		T* data = nullptr;
+		BufferHandle buffer = {};
+		u32 offset = 0;
+		u32 count = 0;
+
+		u32 first_element() const
+		{
+			return offset / (u32)sizeof(T);
+		}
+	};
+
 	// Ended command lists begun for this queue, and the dependencies to wait on.
 	// Lists are submitted in the supplied order. Resource hazards still require
 	// barriers, and uses on independent queues need the appropriate timeline waits.
@@ -268,11 +287,13 @@ namespace ember::gpu
 	// lifetime; stop submitting work and tear down before attempting a new device.
 	bool is_lost();
 
-	// Opens the frame's slot, waiting for its previous GPU use before resetting
-	// command pools and mapped slices. Publish the initialized frame before jobs
-	// use it. Pair begin and end even when no application work is recorded. This,
-	// end_frame() and wait_frame() run on the frame loop's fiber, which alone
-	// completes frames: ending Stage::Gpu, resolving zones and freeing retirement.
+	// Opens the frame's slot. The frame that held it should have come back through
+	// wait_oldest() and been retired; a slot still waiting on the GPU is waited out
+	// here too, before its command pools and mapped slices are reset. Publish the
+	// initialized frame before jobs use it. Pair begin and end even when no
+	// application work is recorded. This, end_frame() and wait_oldest() run on the
+	// frame loop's fiber, which alone completes frames: ending Stage::Gpu, resolving
+	// zones and freeing retirement.
 	void begin_frame(Frame& frame);
 
 	// Closes the frame after all its recording, upload, acquire, and submit calls
@@ -282,9 +303,13 @@ namespace ember::gpu
 	// the CPU handoff; Stage::Gpu ends when the frame's completion is processed.
 	void end_frame(Frame& frame);
 
-	// Waits for an ended frame's recorded queue values and processes its completion.
-	// This tracks GPU work rather than the image reaching the display.
-	void wait_frame(Frame& frame);
+	// Waits for the GPU work of the oldest frame the device still holds, completes it
+	// and hands it back once, for the loop to read its zones and retire. Null when the
+	// device holds none. The loop calls it when every frame in flight is live, which
+	// makes the returned frame the one whose slot the next frame takes; shutdown calls
+	// it until null. This tracks GPU work rather than the image reaching the display.
+	// Runs on the frame loop's fiber.
+	Frame* wait_oldest();
 
 	// Opens a list in the frame's fixed recording storage for one queue, which is
 	// the queue it must be submitted to; a logical queue without a dedicated family
@@ -298,17 +323,30 @@ namespace ember::gpu
 	// from this job or another, before ending its frame.
 	void end_command_list(CommandList* list);
 
-	// Submits the lists and returns their queue timeline point. Lists that read
-	// uploaded data wait on the point submit_uploads() returned for it, and work on
-	// another queue waits on the point of the submission it depends on.
+	// Submits the lists and returns their queue timeline point. Uploads the frame has
+	// recorded so far go first: on the graphics queue they ride ahead of the lists in
+	// this submission, and a submission on a separate queue first sends them on the
+	// graphics queue and waits on that point. The batch fences itself, so a consumer
+	// on the graphics queue records no barrier for uploaded data. Work that depends
+	// on another submission passes its point in waits.
 	Submission submit(const Frame& frame, const SubmitDef& def);
 
-	// Submits the frame's pending uploads and returns the point covering every
-	// upload recorded so far this frame, by any thread. upload() only records; the
-	// copies execute when this or end_frame() submits them. A zero point means
-	// nothing has been uploaded this frame. The backend chooses the queue, graphics
-	// today, so a same-queue consumer is ordered by the queue alone, but passing the
-	// point as a wait keeps it correct when uploads move to the transfer queue.
+	// One list on the graphics queue with no dependencies beyond the frame's uploads,
+	// which is most jobs.
+	inline Submission submit(const Frame& frame, CommandList* list)
+	{
+		SubmitDef def;
+		def.lists = Span<CommandList* const>(&list, 1);
+		return submit(frame, def);
+	}
+
+	// Submits the frame's pending uploads on their own and returns the point covering
+	// every upload recorded so far this frame, by any thread. submit() sends them
+	// itself, so this is for a job that wants the point before it submits anything,
+	// or to start the copies early in a long frame. A zero point means nothing has
+	// been uploaded this frame. Uploads go on the graphics queue today, so a consumer
+	// there is ordered by the queue alone; submit() on a separate queue waits on the
+	// point for it, which stays correct when uploads move to the transfer queue.
 	Submission submit_uploads(const Frame& frame);
 
 	// Checks cached completion and queries the queue timeline when needed.
@@ -384,12 +422,43 @@ namespace ember::gpu
 	// allocation, with exhaustion logged once per slice. Storage lasts until slot reuse.
 	Transient allocate_transient(const Frame& frame, u32 size, u32 alignment);
 
+	// Borrows count values of T from the frame's transient slice, placed so that
+	// first_element() is exact: the start is rounded to a multiple of sizeof(T) inside
+	// an allocation one stride larger, which keeps the ring's power-of-two alignment
+	// contract whatever the stride. An empty array means the slice is spent, or count
+	// was zero.
+	template <typename T>
+	TransientArray<T> allocate_transient(const Frame& frame, u32 count)
+	{
+		static_assert(std::is_trivially_copyable_v<T>, "transient memory is raw bytes");
+		static_assert(alignof(T) <= 256, "the ring aligns to at most 256 bytes");
+		constexpr u32 STRIDE = (u32)sizeof(T);
+
+		const u64 bytes = (u64)count * STRIDE + STRIDE - 1;
+		if (count == 0 || bytes > 0xffffffffu)
+		{
+			return {};
+		}
+
+		const Transient raw = allocate_transient(frame, (u32)bytes, alignof(T));
+		if (raw.cpu == nullptr)
+		{
+			return {};
+		}
+
+		const u32 start = (raw.offset + STRIDE - 1) / STRIDE * STRIDE;
+		return {(T*)((u8*)raw.cpu + (start - raw.offset)), raw.buffer, start, count};
+	}
+
 	// Copies data into staging storage before returning and records a GPU copy
-	// into the frame's upload batch, which submit_uploads() or end_frame() submits.
-	// Consumers in this frame wait on the point submit_uploads() returns; later
-	// frames on the same queue are ordered by the queue. A texture uploaded here is
-	// owned by the upload queue's family; move it with a barrier before another
-	// family reads it. Texture data replaces one whole,
+	// into the frame's upload batch. The copies execute when the frame's next
+	// submit() on any queue, submit_uploads() or end_frame() sends the batch, and
+	// every consumer submitted after that is ordered behind them: the batch fences
+	// its transfer writes against all later commands on the graphics queue, so a
+	// consumer there records no barrier for uploaded data. An upload needs an open
+	// frame, so data that arrives between frames waits for the next one. A texture
+	// uploaded here is owned by the upload queue's family; move it with a barrier
+	// before another family reads it. Texture data replaces one whole,
 	// tightly packed mip and layer, including block rows. The texture ends in
 	// ShaderRead when a shader can read it, in ColorTarget or DepthTarget when it
 	// is only an attachment, and in CopyDst when it is only a copy target.
@@ -417,9 +486,9 @@ namespace ember::gpu
 	// surface or an acquisition failure; skip rendering when no texture is returned.
 	Backbuffer acquire(const Frame& frame, SwapchainHandle swapchain);
 
-	// Read timings after the frame's completion handling has finished. The returned
-	// span borrows slot storage until reuse and does not synchronize with concurrent
-	// polling. Empty when timing is unavailable or the frame no longer owns its slot.
+	// Read timings once wait_oldest() has handed the frame back, before retiring it.
+	// The returned span borrows slot storage until the slot is reused. Empty when
+	// timing is unavailable or the frame no longer owns its slot.
 	Span<const ZoneTiming> zones(const Frame& frame);
 
 	GpuStats stats();

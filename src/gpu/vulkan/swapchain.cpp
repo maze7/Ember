@@ -722,7 +722,7 @@ namespace ember::gpu
 			return {};
 		}
 
-		vk::Slot& slot = vk::slot_of(*b, frame.index);
+		vk::Slot& slot = vk::slot_of(*b, frame);
 		EMBER_ASSERT_MSG(vk::is_open(slot), "an acquire for a frame that has ended");
 
 		EMBER_PROFILE_SCOPE_C("gpu: acquire", PROFILE_COLOR_WAIT);
@@ -763,7 +763,7 @@ namespace ember::gpu
 			return result;
 		}
 
-		const u32 slot_index = (u32)(frame.index % b->ctx.in_flight);
+		const u32 slot_index = frame.slot;
 
 		// OUT_OF_DATE leaves the acquire semaphore unsignalled, so retry it after rebuilding.
 		// Allow two acquire attempts, then leave this frame without an image.

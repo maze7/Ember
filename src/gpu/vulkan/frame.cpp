@@ -1,8 +1,9 @@
 // Gives each frame a reusable slot for its command lists, uploads, and pending presents.
 // begin_frame() waits before reusing that storage; end_frame() closes it to further recording
 // and submission. The slot records the last timeline value submitted to each queue, and the
-// frame loop's fiber alone turns a closed slot into a complete one, so completion never races
-// a slot's reuse. Jobs record, upload, submit and wait on queue points.
+// frame loop's fiber alone turns a closed slot into a complete one and, through wait_oldest(),
+// hands the frame back for retirement, so completion never races a slot's reuse. Jobs record,
+// upload, submit and wait on queue points; a submit carries the frame's pending uploads first.
 //
 // Resource destruction uses those frame completions too. Handles retire immediately, while
 // native objects and descriptor slots wait in the graveyard until their frame stamp can pass.
@@ -223,6 +224,41 @@ namespace ember::gpu
 			slot.lock.unlock();
 		}
 
+		// Send the frame's open upload batch on the graphics queue by itself, if there is one, and
+		// return the point covering every upload recorded so far. The caller holds the graphics
+		// queue lock, so a batch another thread's call swept up first is covered as well.
+		u64 submit_uploads_locked(vk::Backend& b, vk::Slot& slot, vk::QueueState& queue,
+		    u32 queue_index)
+		{
+			if (const VkCommandBuffer uploads = vk::flush_uploads(slot); uploads != VK_NULL_HANDLE)
+			{
+				const u64 value = ++queue.submitted;
+				const VkSemaphoreSubmitInfo signal{
+				    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+				    .semaphore = queue.timeline,
+				    .value = value,
+				    .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+				};
+				const VkCommandBufferSubmitInfo commands{
+				    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+				    .commandBuffer = uploads,
+				};
+				const VkSubmitInfo2 submit_info{
+				    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+				    .commandBufferInfoCount = 1,
+				    .pCommandBufferInfos = &commands,
+				    .signalSemaphoreInfoCount = 1,
+				    .pSignalSemaphoreInfos = &signal,
+				};
+
+				vk::note_result(b, vkQueueSubmit2(queue.handle, 1, &submit_info, VK_NULL_HANDLE));
+				slot.values[queue_index] = value;
+				slot.upload_value = value;
+			}
+
+			return slot.upload_value;
+		}
+
 		// Descriptor slots must be reset before their indices return to the pool. Do both under
 		// resources_lock so creation cannot reuse an index halfway through its reset.
 		bool is_slot(vk::Dead::Kind kind)
@@ -314,10 +350,11 @@ namespace ember::gpu
 			return b.ctx.queues[b.ctx.queue_index[(u32)queue]];
 		}
 
-		Slot& slot_of(Backend& b, u64 frame_index)
+		Slot& slot_of(Backend& b, const Frame& frame)
 		{
-			Slot& slot = b.slots[frame_index % b.ctx.in_flight];
-			EMBER_ASSERT_MSG(slot.frame_index == frame_index, "a frame the device never began");
+			EMBER_ASSERT(frame.slot < b.ctx.in_flight);
+			Slot& slot = b.slots[frame.slot];
+			EMBER_ASSERT_MSG(slot.frame_index == frame.index, "a frame the device never began");
 			return slot;
 		}
 
@@ -542,16 +579,22 @@ namespace ember::gpu
 		EMBER_PROFILE_SCOPE_C("gpu: begin_frame", PROFILE_COLOR_RENDER);
 		EMBER_ASSERT_MSG(jobs::is_main(), "frames are driven from the frame loop's fiber");
 
-		vk::Slot& slot = b->slots[frame.index % b->ctx.in_flight];
+		EMBER_ASSERT_MSG(frame.slot < b->ctx.in_flight &&
+		                     frame.slot == frame.index % b->ctx.in_flight,
+		    "a frame numbered outside the device's slots");
+		vk::Slot& slot = b->slots[frame.slot];
 
-		// Reusing a slot is the last point where its previous frame can finish. Wait before
-		// resetting command pools, query slots, and mapped ring storage.
+		// Reusing a slot is the last point where its previous frame can finish. The loop should
+		// have taken that frame through wait_oldest() already; wait here too before resetting
+		// command pools, query slots, and mapped ring storage.
 		const vk::SlotState previous = slot.state.load(std::memory_order_acquire);
 		EMBER_ASSERT_MSG(previous != vk::SlotState::Open, "begin_frame over a frame still open");
 		if (previous == vk::SlotState::Closed)
 		{
 			wait_slot(*b, slot);
 		}
+		EMBER_ASSERT_MSG(slot.frame == nullptr,
+		    "the frame that held this slot never came back through wait_oldest()");
 
 		// Destruction takes this lock when stamping a resource, so each retirement sees either
 		// the previous frame or this one.
@@ -615,7 +658,7 @@ namespace ember::gpu
 		EMBER_PROFILE_SCOPE_C("gpu: end_frame", PROFILE_COLOR_RENDER);
 		EMBER_ASSERT_MSG(jobs::is_main(), "frames are driven from the frame loop's fiber");
 
-		vk::Slot& slot = vk::slot_of(*b, frame.index);
+		vk::Slot& slot = vk::slot_of(*b, frame);
 		EMBER_ASSERT_MSG(slot.frame == &frame && vk::is_open(slot),
 		    "end_frame of a frame not open");
 
@@ -720,22 +763,47 @@ namespace ember::gpu
 		frames::end_stage(frame, Stage::Present);
 	}
 
-	void wait_frame(Frame& frame)
+	Frame* wait_oldest()
 	{
 		vk::Backend* b = vk::backend();
 		if (b == nullptr)
 		{
-			return;
+			return nullptr;
 		}
 
 		EMBER_ASSERT_MSG(jobs::is_main(), "frames are driven from the frame loop's fiber");
 
-		vk::Slot& slot = vk::slot_of(*b, frame.index);
-		EMBER_ASSERT_MSG(slot.frame == &frame && !vk::is_open(slot), "wait_frame before end_frame");
-		if (slot.state.load(std::memory_order_acquire) == vk::SlotState::Closed)
+		// Frames are numbered in order and retired in order, so the oldest frame still held is
+		// the one whose slot the next frame takes. A slot that is Open belongs to the frame being
+		// recorded and is never the one to hand back.
+		vk::Slot* oldest = nullptr;
+		for (u32 i = 0; i < b->ctx.in_flight; ++i)
 		{
-			wait_slot(*b, slot);
+			vk::Slot& slot = b->slots[i];
+			const vk::SlotState state = slot.state.load(std::memory_order_acquire);
+			const bool held = slot.frame != nullptr &&
+			                  (state == vk::SlotState::Closed || state == vk::SlotState::Complete);
+			if (held && (oldest == nullptr || slot.frame_index < oldest->frame_index))
+			{
+				oldest = &slot;
+			}
 		}
+
+		if (oldest == nullptr)
+		{
+			return nullptr;
+		}
+
+		if (oldest->state.load(std::memory_order_acquire) == vk::SlotState::Closed)
+		{
+			wait_slot(*b, *oldest);
+		}
+
+		// Hand the frame back once. The slot stays Complete and its zones stay readable by frame
+		// number until the slot is reused.
+		Frame* frame = oldest->frame;
+		oldest->frame = nullptr;
+		return frame;
 	}
 
 	CommandList* begin_command_list(const Frame& frame, const char* name, Queue queue)
@@ -748,7 +816,7 @@ namespace ember::gpu
 
 		EMBER_ASSERT(queue < Queue::Count);
 
-		vk::Slot& slot = vk::slot_of(*b, frame.index);
+		vk::Slot& slot = vk::slot_of(*b, frame);
 		EMBER_ASSERT_MSG(vk::is_open(slot), "a command list for a frame that has ended");
 
 		const u32 q = (u32)queue;
@@ -837,9 +905,9 @@ namespace ember::gpu
 
 		EMBER_PROFILE_SCOPE_C("gpu: submit", PROFILE_COLOR_RENDER);
 		EMBER_ASSERT(def.queue < Queue::Count);
-		EMBER_ASSERT(def.waits.size() + vk::MAX_SWAPCHAINS <= MAX_WAITS);
+		EMBER_ASSERT(def.waits.size() + vk::MAX_SWAPCHAINS + 1 <= MAX_WAITS);
 
-		vk::Slot& slot = vk::slot_of(*b, frame.index);
+		vk::Slot& slot = vk::slot_of(*b, frame);
 		EMBER_ASSERT_MSG(vk::is_open(slot), "a submit for a frame that has ended");
 
 		for (CommandList* list : def.lists)
@@ -871,7 +939,31 @@ namespace ember::gpu
 		}
 
 		vk::QueueState& queue = vk::queue_for(*b, def.queue);
+		vk::QueueState& graphics = vk::queue_for(*b, Queue::Graphics);
 		const u32 queue_index = b->ctx.queue_index[(u32)def.queue];
+
+		// Uploads recorded so far reach the GPU first. On a separate queue they are sent on the
+		// graphics queue now and this submission waits on their point; on the graphics queue's
+		// own native queue the batch rides ahead of the lists, taken under the queue lock below
+		// so nothing reaches the queue between the two.
+		VkCommandBuffer uploads = VK_NULL_HANDLE;
+		if (&queue != &graphics)
+		{
+			graphics.lock.lock();
+			const u64 covered =
+			    submit_uploads_locked(*b, slot, graphics, b->ctx.queue_index[(u32)Queue::Graphics]);
+			graphics.lock.unlock();
+
+			if (covered != 0)
+			{
+				waits[wait_count++] = {
+				    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+				    .semaphore = graphics.timeline,
+				    .value = covered,
+				    .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+				};
+			}
+		}
 
 		queue.lock.lock();
 
@@ -883,6 +975,11 @@ namespace ember::gpu
 		{
 			wait_count += take_acquire_waits(slot, waits + wait_count);
 			fold_backbuffer_states(slot, def.lists);
+		}
+
+		if (&queue == &graphics)
+		{
+			uploads = vk::flush_uploads(slot);
 		}
 
 		const u64 value = ++queue.submitted;
@@ -903,10 +1000,19 @@ namespace ember::gpu
 			const bool first = offset == 0;
 			const bool last = offset + count == total;
 
-			VkCommandBufferSubmitInfo commands[LISTS_PER_SUBMIT];
+			// The upload batch leads the first chunk, so the array holds one more than a chunk.
+			VkCommandBufferSubmitInfo commands[LISTS_PER_SUBMIT + 1];
+			u32 command_count = 0;
+			if (first && uploads != VK_NULL_HANDLE)
+			{
+				commands[command_count++] = {
+				    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+				    .commandBuffer = uploads,
+				};
+			}
 			for (u32 i = 0; i < count; ++i)
 			{
-				commands[i] = {
+				commands[command_count++] = {
 				    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
 				    .commandBuffer = def.lists[offset + i]->commands,
 				};
@@ -916,7 +1022,7 @@ namespace ember::gpu
 			    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
 			    .waitSemaphoreInfoCount = first ? wait_count : 0,
 			    .pWaitSemaphoreInfos = waits,
-			    .commandBufferInfoCount = count,
+			    .commandBufferInfoCount = command_count,
 			    .pCommandBufferInfos = commands,
 			    .signalSemaphoreInfoCount = last ? 1u : 0u,
 			    .pSignalSemaphoreInfos = &signal,
@@ -927,6 +1033,10 @@ namespace ember::gpu
 		} while (offset < total);
 
 		slot.values[queue_index] = value;
+		if (uploads != VK_NULL_HANDLE)
+		{
+			slot.upload_value = value;
+		}
 		queue.lock.unlock();
 
 		return {.value = value, .queue = def.queue};
@@ -942,42 +1052,14 @@ namespace ember::gpu
 
 		EMBER_PROFILE_SCOPE_C("gpu: submit_uploads", PROFILE_COLOR_RENDER);
 
-		vk::Slot& slot = vk::slot_of(*b, frame.index);
+		vk::Slot& slot = vk::slot_of(*b, frame);
 		EMBER_ASSERT_MSG(vk::is_open(slot), "an upload submit for a frame that has ended");
 
 		vk::QueueState& queue = vk::queue_for(*b, Queue::Graphics);
-		const u32 queue_index = b->ctx.queue_index[(u32)Queue::Graphics];
 
-		// Take the batch and submit it under the queue lock, so the point returned covers every
-		// upload recorded before this call, including one that another thread's call swept into
-		// the batch it submitted first.
 		queue.lock.lock();
-		if (const VkCommandBuffer uploads = vk::flush_uploads(slot); uploads != VK_NULL_HANDLE)
-		{
-			const u64 value = ++queue.submitted;
-			const VkSemaphoreSubmitInfo signal{
-			    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-			    .semaphore = queue.timeline,
-			    .value = value,
-			    .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-			};
-			const VkCommandBufferSubmitInfo commands{
-			    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-			    .commandBuffer = uploads,
-			};
-			const VkSubmitInfo2 submit_info{
-			    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-			    .commandBufferInfoCount = 1,
-			    .pCommandBufferInfos = &commands,
-			    .signalSemaphoreInfoCount = 1,
-			    .pSignalSemaphoreInfos = &signal,
-			};
-
-			vk::note_result(*b, vkQueueSubmit2(queue.handle, 1, &submit_info, VK_NULL_HANDLE));
-			slot.values[queue_index] = value;
-			slot.upload_value = value;
-		}
-		const u64 covered = slot.upload_value;
+		const u64 covered =
+		    submit_uploads_locked(*b, slot, queue, b->ctx.queue_index[(u32)Queue::Graphics]);
 		queue.lock.unlock();
 
 		return {.value = covered, .queue = Queue::Graphics};
@@ -1055,7 +1137,12 @@ namespace ember::gpu
 			return {};
 		}
 
-		const vk::Slot& slot = b->slots[frame.index % b->ctx.in_flight];
+		if (frame.slot >= b->ctx.in_flight)
+		{
+			return {};
+		}
+
+		const vk::Slot& slot = b->slots[frame.slot];
 		if (slot.frame_index != frame.index ||
 		    slot.state.load(std::memory_order_acquire) != vk::SlotState::Complete)
 		{

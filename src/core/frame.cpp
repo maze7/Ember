@@ -140,6 +140,7 @@ namespace ember::frames
 		Frame& frame = entry.frame;
 		frame = Frame{};
 		frame.index = index;
+		frame.slot = (u32)(index % s_frames.def.in_flight);
 		frame.dt_ns = dt_ns;
 		frame.dt = (f32)dt_ns * 1.0e-9f;
 		frame.time_ns = now;

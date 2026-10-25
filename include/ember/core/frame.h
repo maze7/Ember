@@ -43,6 +43,11 @@ namespace ember
 		// Frames count from 1. Zero is boot, which no frame is.
 		u64 index = 0;
 
+		// Which of the in_flight storages this frame uses: index % in_flight, set by begin().
+		// Anything versioned per frame in flight picks by it: the device's slots, a readback
+		// buffer, an Upload buffer the CPU rewrites each frame.
+		u32 slot = 0;
+
 		// Since the previous frame began, on the engine's clock, clamped to FramesDef::max_dt.
 		u64 dt_ns = 0;
 		f32 dt = 0.0f;
