@@ -66,8 +66,8 @@ namespace ember
 
 		constexpr bool operator==(const Handle&) const noexcept = default;
 
-		// Returns true if the handle is valid
-		constexpr operator bool() const noexcept
+		// Tests for a non-null handle. A non-null handle can still be stale.
+		constexpr explicit operator bool() const noexcept
 		{
 			return !is_null();
 		}
