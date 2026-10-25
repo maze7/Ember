@@ -1,14 +1,14 @@
 #pragma once
 
-// Reserves one address range at startup for the heap, block pool, fiber stacks,
-// and optional development memory. Allocators work within these fixed budgets.
-// Sanitizer builds use the system allocator for heap storage.
+// Initialize memory before bringing up other engine systems. Use arenas for allocations that can
+// be reclaimed together, and the heap for allocations that need to be freed individually.
 //
-// Tracking reports heap allocations by tag and arena requests since begin().
-// EMBER_MEMORY_TRACKING selects detailed tracking (2), counters (1), or none (0).
+// MemoryDef sets the budgets for the heap, tagged block pool, fiber stacks, and development memory.
+// These partitions share one address range reserved at initialization. Normal allocation stays
+// within those budgets; sanitizer builds use the system allocator for heap storage.
 //
-// Allocate only between initialize() and shutdown(). Static objects must release
-// any heap storage before shutdown().
+// Memory tracking can be controlled via the EMBER_MEMORY_TRACKING define (0 = none, 1 = counters,
+// 2 = detailed).
 
 #include <ember/core/enum.h>
 #include <ember/core/macros.h>
