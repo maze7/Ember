@@ -52,5 +52,5 @@ function(ember_add_module name)
 		)
 	endif()
 
-	target_link_libraries(ember INTERFACE ember::${name})
+	target_link_libraries(ember PUBLIC ember::${name})
 endfunction()

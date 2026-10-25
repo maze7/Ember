@@ -2,7 +2,11 @@
 
 // Per-frame timing, stage completion, and arena lifetime. Separate frames let update, render,
 // and GPU work overlap, following the FrameParams design in Christian Gyrling's 2015 GDC talk.
-// Retire a frame only after every CPU and GPU reader has finished with its storage.
+//
+// Frame memory holds what the CPU stages build for each other and nothing the GPU reads, so a
+// frame can retire once its CPU stages have ended. begin() retires the oldest live frame when
+// every frame in flight is live; retire() by hand returns memory sooner. The record outlives the
+// memory in the history, which is how the device stamps Stage::Gpu by frame number afterwards.
 // Budget for each allocating thread in each live frame, plus refills and oversized allocations.
 
 #include <ember/core/types.h>
@@ -14,8 +18,6 @@ namespace ember
 		class Arena;
 	}
 
-	// Gpu ends at device completion. Present records the presentation request, not when an image
-	// reaches the display, so it can end before Gpu.
 	enum class Stage : u8
 	{
 		Update,
@@ -72,17 +74,22 @@ namespace ember
 		// Allocates arenas and history after memory::initialize().
 		void initialize(const FramesDef& def = {});
 
-		// Releases arenas and history. Retire every frame first.
+		// Releases arenas and history, retiring any frame still live.
 		void shutdown();
 
-		// Starts the next frame and its arena. Retire an older frame first when at the live limit.
+		// Starts the next frame and its arena. At the live limit it retires the oldest frame
+		// first, whose CPU stages must have ended: wait for render jobs before beginning the
+		// frame that needs the arena.
 		Frame& begin();
 
-		// Record stage times; end_stage() publishes completion to completed() readers.
-		void begin_stage(Frame& frame, Stage stage);
-		void end_stage(Frame& frame, Stage stage);
+		// Record stage times by frame number; end_stage() publishes completion to completed()
+		// readers. Stamps land on retired frames too while the record is in the history, which
+		// is how the GPU stage ends after the memory is gone.
+		void begin_stage(u64 index, Stage stage);
+		void end_stage(u64 index, Stage stage);
 
-		// Returns the frame's memory to the block heap, once every stage that needs it has ended.
+		// Returns the frame's memory to the block heap. begin() does this at the live limit; call
+		// it to return memory sooner, or from a loop without a device.
 		void retire(Frame& frame);
 
 		// The record of a frame in the history, or null for one not begun yet or too old.

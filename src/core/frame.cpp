@@ -50,6 +50,34 @@ namespace ember::frames
 			const Entry* entry = s_frames.history.find(frame.index - 1);
 			return entry != nullptr && &entry->frame == &frame;
 		}
+
+		// The record for a stage stamp by number: null, after asserting, when the history no
+		// longer holds the frame or has not reached it.
+		Entry* record(u64 index)
+		{
+			Entry* entry = visible(index) ? s_frames.history.find(index - 1) : nullptr;
+			EMBER_ASSERT_MSG(entry != nullptr, "a stage of a frame that is not in the history");
+			return entry;
+		}
+
+		// Frames may retire out of order, so the oldest live one is found by walking the history.
+		Frame* oldest_live()
+		{
+			for (Entry& entry : s_frames.history)
+			{
+				if (entry.frame.memory != nullptr)
+				{
+					return &entry.frame;
+				}
+			}
+
+			return nullptr;
+		}
+
+		bool in_progress(const Frame& frame, Stage stage)
+		{
+			return frame.stage_begin_ns[(u32)stage] != 0 && frame.stage_end_ns[(u32)stage] == 0;
+		}
 	}
 
 	void initialize(const FramesDef& def)
@@ -81,7 +109,15 @@ namespace ember::frames
 			return;
 		}
 
-		EMBER_ASSERT_MSG(s_frames.live == 0, "a frame is still live at shutdown");
+		// Nothing runs any more, so whatever is still live can go.
+		for (Entry& entry : s_frames.history)
+		{
+			if (entry.frame.memory != nullptr)
+			{
+				retire(entry.frame);
+			}
+		}
+		EMBER_ASSERT(s_frames.live == 0);
 
 		memory::Allocator* heap = memory::heap();
 		for (u32 i = 0; i < s_frames.def.in_flight; ++i)
@@ -100,8 +136,18 @@ namespace ember::frames
 	Frame& begin()
 	{
 		EMBER_ASSERT_MSG(s_frames.initialized, "begin before initialize");
-		EMBER_ASSERT_MSG(s_frames.live < s_frames.def.in_flight,
-		    "every in-flight frame is live: retire one before beginning another");
+
+		// At the live limit the oldest frame gives its arena to this one. A sequential loop has
+		// ended its CPU stages by now; a loop that runs a stage on jobs waits for them first.
+		if (s_frames.live == s_frames.def.in_flight)
+		{
+			Frame* oldest = oldest_live();
+			EMBER_ASSERT(oldest != nullptr);
+			EMBER_ASSERT_MSG(!in_progress(*oldest, Stage::Update) &&
+			                     !in_progress(*oldest, Stage::Render),
+			    "begin() must retire the oldest frame, but a CPU stage of it is still running");
+			retire(*oldest);
+		}
 
 		const u64 index = s_frames.history.next_sequence() + 1;
 		Entry& entry = s_frames.history.push();
@@ -144,23 +190,23 @@ namespace ember::frames
 		return frame;
 	}
 
-	void begin_stage(Frame& frame, Stage stage)
+	void begin_stage(u64 index, Stage stage)
 	{
 		EMBER_ASSERT((u32)stage < STAGE_COUNT);
-		EMBER_ASSERT_MSG(frame.memory != nullptr && is_ours(frame),
-		    "a stage of a frame that is not live");
-		frame.stage_begin_ns[(u32)stage] = now_ns();
+		if (Entry* entry = record(index); entry != nullptr)
+		{
+			entry->frame.stage_begin_ns[(u32)stage] = now_ns();
+		}
 	}
 
-	void end_stage(Frame& frame, Stage stage)
+	void end_stage(u64 index, Stage stage)
 	{
 		EMBER_ASSERT((u32)stage < STAGE_COUNT);
-		EMBER_ASSERT_MSG(frame.memory != nullptr && is_ours(frame),
-		    "a stage of a frame that is not live");
-
-		frame.stage_end_ns[(u32)stage] = now_ns();
-		s_frames.history.find(frame.index - 1)
-		    ->completed_stages.fetch_or(u32(1) << (u32)stage, std::memory_order_release);
+		if (Entry* entry = record(index); entry != nullptr)
+		{
+			entry->frame.stage_end_ns[(u32)stage] = now_ns();
+			entry->completed_stages.fetch_or(u32(1) << (u32)stage, std::memory_order_release);
+		}
 	}
 
 	void retire(Frame& frame)

@@ -9,6 +9,10 @@
 // The frame loop's fiber alone begins, ends and completes frames. Driver waits
 // park scheduler fibers through I/O tasks when available; external callers and
 // failed I/O submissions run the blocking call directly.
+//
+// Frame memory never reaches the GPU. Per-frame data goes through the device's
+// rings, recycled with the frame slot, so the frame module retires a frame once
+// its CPU stages end and the device stamps Stage::Gpu by frame number afterwards.
 
 #include <ember/containers/span.h>
 #include <ember/core/frame.h>
@@ -266,10 +270,10 @@ namespace ember::gpu
 	bool is_lost();
 
 	// Opens the frame's slot and resets its command pools and mapped slices after
-	// waiting for any remaining GPU use. Return and retire the previous owner
-	// through wait_oldest() first. Publish the initialized frame before jobs use it,
-	// and pair begin/end even for empty frames. Call this, end_frame() and
-	// wait_oldest() on the frame loop's fiber, which alone completes frames.
+	// waiting for the previous frame's GPU work, which is the one wait the loop
+	// pays for the device. Publish the initialized frame before jobs use it, and
+	// pair begin/end even for empty frames. Call this and end_frame() on the frame
+	// loop's fiber, which alone completes frames.
 	void begin_frame(Frame& frame);
 
 	// Closes the frame after all its recording, upload, acquire, and submit calls
@@ -278,12 +282,6 @@ namespace ember::gpu
 	// Callers supply dependencies on independent queues. Stage::Present measures
 	// the CPU handoff; Stage::Gpu ends when the frame's completion is processed.
 	void end_frame(Frame& frame);
-
-	// Waits for and completes the oldest held frame, then returns it once for the
-	// loop to read its zones and retire. Returns null when none remain. Call when
-	// all frame slots are live, and drain at shutdown. Runs on the frame loop's
-	// fiber and tracks GPU work, not completion of presentation.
-	Frame* wait_oldest();
 
 	// Opens a list for the named logical queue; submit it to that same queue.
 	// Keep name alive through the frame. Exhaustion logs and returns null. The
@@ -435,10 +433,10 @@ namespace ember::gpu
 	// texture, which can mean a zero-sized surface or an acquisition failure.
 	Backbuffer acquire(const Frame& frame, SwapchainHandle swapchain);
 
-	// Read timings once wait_oldest() has handed the frame back, before retiring it.
-	// The returned span borrows slot storage until the slot is reused. Empty when
-	// timing is unavailable or the frame no longer owns its slot.
-	Span<const ZoneTiming> zones(const Frame& frame);
+	// Timings of a completed frame, kept until the frame that next uses its slot
+	// completes, so after begin_frame() the frame in_flight before it is readable.
+	// Empty when timing is unavailable or the frame is no longer held.
+	Span<const ZoneTiming> zones(u64 frame_index);
 
 	GpuStats stats();
 

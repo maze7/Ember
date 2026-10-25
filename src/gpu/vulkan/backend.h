@@ -339,9 +339,9 @@ namespace ember::gpu::vk
 		// end_frame() uses this list to prepare acquired images for presentation.
 		CommandList finish;
 
-		// Held until wait_oldest() returns it and clears this pointer. Recording, uploads,
-		// acquisition and submission require Open; completion handling requires Closed.
-		Frame* frame = nullptr;
+		// The frame using the slot, by number. Completion stamps its Stage::Gpu by it, whether or
+		// not the frame module has retired the frame's memory. Recording, uploads, acquisition
+		// and submission require Open; completion handling requires Closed.
 		u64 frame_index = 0;
 		std::atomic<SlotState> state{SlotState::Idle};
 
@@ -366,9 +366,12 @@ namespace ember::gpu::vk
 		bool upload_open = false;
 		u64 upload_value = 0;
 
-		// Space for (list_total + 1) * MAX_ZONES results, including end_frame()'s private list.
+		// Space for (list_total + 1) * MAX_ZONES results, including end_frame()'s private list,
+		// and the frame they belong to. Kept until this slot's next completion, so the previous
+		// frame's timings survive the slot's reuse.
 		ZoneTiming* zones = nullptr;
 		u32 zone_count = 0;
+		u64 zone_frame = 0;
 	};
 
 	inline bool is_open(const Slot& slot)

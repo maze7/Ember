@@ -1,7 +1,7 @@
 // Frame slots retain command lists, uploads and pending presents until their queue values pass.
-// Only the frame loop's fiber completes slots and returns frames for retirement, preventing
-// completion from racing reuse. Resource handles retire immediately; native objects and
-// descriptor slots wait for the frames that could use them.
+// Only the frame loop's fiber completes slots, stamping each frame's GPU stage by number, so
+// completion never races reuse and needs no frame memory. Resource handles retire immediately;
+// native objects and descriptor slots wait for the frames that could use them.
 
 #include <ember/gpu/gpu.h>
 
@@ -147,15 +147,17 @@ namespace ember::gpu
 			resolve_list_zones(b, slot, slot.finish);
 		}
 
-		// Only the frame loop's fiber may finish a slot. Publish Complete after zones and
-		// Stage::Gpu are resolved so readers cannot observe a partially completed frame.
+		// Only the frame loop's fiber may finish a slot. Stage::Gpu is stamped by frame number,
+		// since the frame module may have retired the frame's memory already. Publish Complete
+		// after zones and the stamp so readers cannot observe a partially completed frame.
 		void finish_slot(vk::Backend& b, vk::Slot& slot)
 		{
 			EMBER_ASSERT(jobs::is_main());
 			EMBER_ASSERT(slot.state.load(std::memory_order_relaxed) == vk::SlotState::Closed);
 
 			resolve_zones(b, slot);
-			frames::end_stage(*slot.frame, Stage::Gpu);
+			slot.zone_frame = slot.frame_index;
+			frames::end_stage(slot.frame_index, Stage::Gpu);
 			slot.state.store(vk::SlotState::Complete, std::memory_order_release);
 		}
 
@@ -551,11 +553,10 @@ namespace ember::gpu
 
 	void begin_frame(Frame& frame)
 	{
+
 		vk::Backend* b = vk::backend();
 		if (b == nullptr)
-		{
 			return;
-		}
 
 		EMBER_PROFILE_SCOPE_C("gpu: begin_frame", PROFILE_COLOR_RENDER);
 		EMBER_ASSERT_MSG(jobs::is_main(), "frames are driven from the frame loop's fiber");
@@ -565,16 +566,14 @@ namespace ember::gpu
 		    "a frame numbered outside the device's slots");
 		vk::Slot& slot = b->slots[frame.slot];
 
-		// The loop should already have returned the old frame through wait_oldest(). Wait
-		// here too before resetting any storage its GPU work could still use.
+		// The frame that last used this slot may still be on the GPU. Wait for it before resetting
+		// any storage its work could still use; its memory is the frame module's business.
 		const vk::SlotState previous = slot.state.load(std::memory_order_acquire);
 		EMBER_ASSERT_MSG(previous != vk::SlotState::Open, "begin_frame over a frame still open");
 		if (previous == vk::SlotState::Closed)
 		{
 			wait_slot(*b, slot);
 		}
-		EMBER_ASSERT_MSG(slot.frame == nullptr,
-		    "the frame that held this slot never came back through wait_oldest()");
 
 		// Destruction takes this lock when stamping a resource, so each retirement sees either
 		// the previous frame or this one.
@@ -611,11 +610,9 @@ namespace ember::gpu
 			    per_slot);
 		}
 
-		slot.frame = &frame;
 		slot.frame_index = frame.index;
 		slot.present_count = 0;
 		slot.acquire_wait_count = 0;
-		slot.zone_count = 0;
 		for (u64& value : slot.values)
 		{
 			value = 0;
@@ -639,8 +636,7 @@ namespace ember::gpu
 		EMBER_ASSERT_MSG(jobs::is_main(), "frames are driven from the frame loop's fiber");
 
 		vk::Slot& slot = vk::slot_of(*b, frame);
-		EMBER_ASSERT_MSG(slot.frame == &frame && vk::is_open(slot),
-		    "end_frame of a frame not open");
+		EMBER_ASSERT_MSG(vk::is_open(slot), "end_frame of a frame not open");
 
 		for (u32 q = 0; q < vk::QUEUE_COUNT; ++q)
 		{
@@ -687,7 +683,7 @@ namespace ember::gpu
 		b->peak_staging_used = max(b->peak_staging_used, b->last_staging_used);
 
 		// The GPU stage starts with the frame's last submission. Stamp it before the slot closes.
-		frames::begin_stage(frame, Stage::Gpu);
+		frames::begin_stage(frame.index, Stage::Gpu);
 
 		queue.lock.lock();
 
@@ -736,51 +732,9 @@ namespace ember::gpu
 
 		// Measure the CPU call that queues presentation. Its semaphore waits happen on the GPU,
 		// so this stage records the handoff rather than display latency.
-		frames::begin_stage(frame, Stage::Present);
+		frames::begin_stage(frame.index, Stage::Present);
 		vk::present(*b, slot);
-		frames::end_stage(frame, Stage::Present);
-	}
-
-	Frame* wait_oldest()
-	{
-		vk::Backend* b = vk::backend();
-		if (b == nullptr)
-		{
-			return nullptr;
-		}
-
-		EMBER_ASSERT_MSG(jobs::is_main(), "frames are driven from the frame loop's fiber");
-
-		// Ordered frame retirement returns the slot needed by the next frame. Open slots still
-		// belong to recording and cannot be returned.
-		vk::Slot* oldest = nullptr;
-		for (u32 i = 0; i < b->ctx.in_flight; ++i)
-		{
-			vk::Slot& slot = b->slots[i];
-			const vk::SlotState state = slot.state.load(std::memory_order_acquire);
-			const bool held = slot.frame != nullptr &&
-			                  (state == vk::SlotState::Closed || state == vk::SlotState::Complete);
-			if (held && (oldest == nullptr || slot.frame_index < oldest->frame_index))
-			{
-				oldest = &slot;
-			}
-		}
-
-		if (oldest == nullptr)
-		{
-			return nullptr;
-		}
-
-		if (oldest->state.load(std::memory_order_acquire) == vk::SlotState::Closed)
-		{
-			wait_slot(*b, *oldest);
-		}
-
-		// Hand the frame back once. The slot stays Complete and its zones stay readable by frame
-		// number until the slot is reused.
-		Frame* frame = oldest->frame;
-		oldest->frame = nullptr;
-		return frame;
+		frames::end_stage(frame.index, Stage::Present);
 	}
 
 	CommandList* begin_command_list(const Frame& frame, const char* name, Queue queue)
@@ -1101,27 +1055,25 @@ namespace ember::gpu
 		vk::drain(*b, true);
 	}
 
-	Span<const ZoneTiming> zones(const Frame& frame)
+	Span<const ZoneTiming> zones(u64 frame_index)
 	{
 		const vk::Backend* b = vk::backend();
-		if (b == nullptr)
+		if (b == nullptr || frame_index == 0)
 		{
 			return {};
 		}
 
-		if (frame.slot >= b->ctx.in_flight)
+		// The slot that ran the frame keeps its resolved zones until its next frame completes.
+		for (u32 i = 0; i < b->ctx.in_flight; ++i)
 		{
-			return {};
+			const vk::Slot& slot = b->slots[i];
+			if (slot.zone_frame == frame_index)
+			{
+				return {slot.zones, slot.zone_count};
+			}
 		}
 
-		const vk::Slot& slot = b->slots[frame.slot];
-		if (slot.frame_index != frame.index ||
-		    slot.state.load(std::memory_order_acquire) != vk::SlotState::Complete)
-		{
-			return {};
-		}
-
-		return {slot.zones, slot.zone_count};
+		return {};
 	}
 
 	GpuStats stats()

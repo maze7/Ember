@@ -12,8 +12,9 @@ option(EMBER_BUILD_GPU "Build the gpu module" ON)
 option(EMBER_BUILD_AUDIO "Build the audio module" ON)
 option(EMBER_ENABLE_PROFILING "Enable Tracy profiling in the engine" ON)
 
-add_library(ember INTERFACE)
+add_library(ember STATIC src/ember.cpp)
 add_library(ember::ember ALIAS ember)
+target_link_libraries(ember PRIVATE ember_build_options)
 
 add_subdirectory(third_party)
 add_subdirectory(src)
