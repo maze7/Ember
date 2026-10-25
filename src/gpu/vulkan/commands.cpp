@@ -12,11 +12,15 @@ namespace ember::gpu
 {
 	namespace
 	{
-		bool recording(const CommandList* list)
+		// The list a handle may record into, or null. open alone cannot reject a handle kept past
+		// slot reuse, since the list may be recording again for a later frame.
+		CommandListState* recording(CommandList handle)
 		{
-			EMBER_ASSERT_MSG(list != nullptr && list->open,
-			    "a command on a list that is not recording");
-			return list != nullptr && list->open;
+			CommandListState* list = handle.state;
+			const bool live =
+			    list != nullptr && list->open && list->frame_index == handle.frame_index;
+			EMBER_ASSERT_MSG(live, "a command on a list that is not recording");
+			return live ? list : nullptr;
 		}
 
 		struct BufferStateInfo
@@ -102,12 +106,12 @@ namespace ember::gpu
 			};
 		}
 
-		void note_backbuffer(CommandList& list, SwapchainHandle swapchain, u32 image,
+		void note_backbuffer(CommandListState& list, SwapchainHandle swapchain, u32 image,
 		    TextureState state)
 		{
 			for (u32 i = 0; i < list.backbuffer_count; ++i)
 			{
-				CommandList::BackbufferUse& use = list.backbuffers[i];
+				CommandListState::BackbufferUse& use = list.backbuffers[i];
 				if (use.swapchain == swapchain)
 				{
 					use.image = image;
@@ -145,7 +149,7 @@ namespace ember::gpu
 			return value;
 		}
 
-		u32 zone_query(const vk::Backend& b, const CommandList& list, u32 zone)
+		u32 zone_query(const vk::Backend& b, const CommandListState& list, u32 zone)
 		{
 			return ((list.slot * (b.ctx.list_total + 1)) + list.index) * vk::MAX_ZONES * 2 +
 			       zone * 2;
@@ -153,7 +157,7 @@ namespace ember::gpu
 
 		// Graphics and compute need separate descriptor binds. Keep this off the common draw
 		// path, which only needs to check whether offsets changed.
-		EMBER_NOINLINE void flush_constants(CommandList* list, VkPipelineBindPoint bind_point,
+		EMBER_NOINLINE void flush_constants(CommandListState* list, VkPipelineBindPoint bind_point,
 		    bool& dirty)
 		{
 			const vk::Backend& b = *vk::backend();
@@ -163,11 +167,12 @@ namespace ember::gpu
 		}
 
 		// Pass and pipeline checks are assertions, so callers must satisfy them in every build.
-		bool draw_ready(CommandList* list)
+		CommandListState* draw_ready(CommandList handle)
 		{
-			if (!recording(list))
+			CommandListState* list = recording(handle);
+			if (list == nullptr)
 			{
-				return false;
+				return nullptr;
 			}
 
 			EMBER_ASSERT_MSG(list->inside_pass, "draws record inside a render pass");
@@ -177,14 +182,15 @@ namespace ember::gpu
 				flush_constants(list, VK_PIPELINE_BIND_POINT_GRAPHICS,
 				    list->constants_dirty_graphics);
 			}
-			return true;
+			return list;
 		}
 
-		bool dispatch_ready(CommandList* list)
+		CommandListState* dispatch_ready(CommandList handle)
 		{
-			if (!recording(list))
+			CommandListState* list = recording(handle);
+			if (list == nullptr)
 			{
-				return false;
+				return nullptr;
 			}
 
 			EMBER_ASSERT_MSG(!list->inside_pass, "dispatches record outside render passes");
@@ -196,7 +202,7 @@ namespace ember::gpu
 				flush_constants(list, VK_PIPELINE_BIND_POINT_COMPUTE,
 				    list->constants_dirty_compute);
 			}
-			return true;
+			return list;
 		}
 
 		// Stale argument buffers log and skip the indirect command.
@@ -288,10 +294,11 @@ namespace ember::gpu
 		}
 	}
 
-	void barrier(CommandList* list, Span<const TextureBarrier> textures,
+	void CommandList::barrier(Span<const TextureBarrier> textures,
 	    Span<const BufferBarrier> buffers)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -442,9 +449,10 @@ namespace ember::gpu
 		}
 	}
 
-	void memory_barrier(CommandList* list)
+	void CommandList::memory_barrier()
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -469,9 +477,10 @@ namespace ember::gpu
 		vkCmdPipelineBarrier2(list->commands, &dependency);
 	}
 
-	void begin_render_pass(CommandList* list, const RenderPassDef& def)
+	void CommandList::begin_render_pass(const RenderPassDef& def)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -552,13 +561,14 @@ namespace ember::gpu
 		vkCmdBeginRendering(list->commands, &rendering);
 		list->inside_pass = true;
 
-		set_viewport(list, {.width = (f32)extent.width, .height = (f32)extent.height});
-		set_scissor(list, {.width = extent.width, .height = extent.height});
+		set_viewport({.width = (f32)extent.width, .height = (f32)extent.height});
+		set_scissor({.width = extent.width, .height = extent.height});
 	}
 
-	void end_render_pass(CommandList* list)
+	void CommandList::end_render_pass()
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -568,9 +578,10 @@ namespace ember::gpu
 		list->inside_pass = false;
 	}
 
-	void set_viewport(CommandList* list, const Viewport& viewport)
+	void CommandList::set_viewport(const Viewport& viewport)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -582,9 +593,10 @@ namespace ember::gpu
 		vkCmdSetViewport(list->commands, 0, 1, &native);
 	}
 
-	void set_scissor(CommandList* list, const Rect& scissor)
+	void CommandList::set_scissor(const Rect& scissor)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -597,9 +609,10 @@ namespace ember::gpu
 		vkCmdSetScissor(list->commands, 0, 1, &native);
 	}
 
-	void bind_pipeline(CommandList* list, GraphicsPipelineHandle pipeline)
+	void CommandList::bind_pipeline(GraphicsPipelineHandle pipeline)
 	{
-		if (!recording(list) || list->graphics_pipeline == pipeline)
+		CommandListState* list = recording(*this);
+		if (list == nullptr || list->graphics_pipeline == pipeline)
 		{
 			return;
 		}
@@ -616,9 +629,10 @@ namespace ember::gpu
 		list->graphics_pipeline = pipeline;
 	}
 
-	void bind_pipeline(CommandList* list, ComputePipelineHandle pipeline)
+	void CommandList::bind_pipeline(ComputePipelineHandle pipeline)
 	{
-		if (!recording(list) || list->compute_pipeline == pipeline)
+		CommandListState* list = recording(*this);
+		if (list == nullptr || list->compute_pipeline == pipeline)
 		{
 			return;
 		}
@@ -635,9 +649,10 @@ namespace ember::gpu
 		list->compute_pipeline = pipeline;
 	}
 
-	void push_constants(CommandList* list, const void* data, u32 size)
+	void CommandList::push_constants(const void* data, u32 size)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -649,9 +664,10 @@ namespace ember::gpu
 		    0, size, data);
 	}
 
-	void set_constants(CommandList* list, u32 slot, const void* data, u32 size)
+	void CommandList::set_constants(u32 slot, const void* data, u32 size)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -672,9 +688,10 @@ namespace ember::gpu
 		list->constants_dirty_compute = true;
 	}
 
-	void bind_index_buffer(CommandList* list, BufferHandle buffer, IndexFormat format, u64 offset)
+	void CommandList::bind_index_buffer(BufferHandle buffer, IndexFormat format, u64 offset)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -706,10 +723,11 @@ namespace ember::gpu
 		list->index_type = type;
 	}
 
-	void draw(CommandList* list, u32 vertex_count, u32 instance_count, u32 first_vertex,
+	void CommandList::draw(u32 vertex_count, u32 instance_count, u32 first_vertex,
 	    u32 first_instance)
 	{
-		if (!draw_ready(list))
+		CommandListState* list = draw_ready(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -717,10 +735,11 @@ namespace ember::gpu
 		vkCmdDraw(list->commands, vertex_count, instance_count, first_vertex, first_instance);
 	}
 
-	void draw_indexed(CommandList* list, u32 index_count, u32 instance_count, u32 first_index,
+	void CommandList::draw_indexed(u32 index_count, u32 instance_count, u32 first_index,
 	    i32 base_vertex, u32 first_instance)
 	{
-		if (!draw_ready(list))
+		CommandListState* list = draw_ready(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -731,9 +750,10 @@ namespace ember::gpu
 		    first_instance);
 	}
 
-	void draw_indirect(CommandList* list, BufferHandle args, u64 offset, u32 draw_count, u32 stride)
+	void CommandList::draw_indirect(BufferHandle args, u64 offset, u32 draw_count, u32 stride)
 	{
-		if (!draw_ready(list))
+		CommandListState* list = draw_ready(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -748,10 +768,11 @@ namespace ember::gpu
 		}
 	}
 
-	void draw_indexed_indirect(CommandList* list, BufferHandle args, u64 offset, u32 draw_count,
+	void CommandList::draw_indexed_indirect(BufferHandle args, u64 offset, u32 draw_count,
 	    u32 stride)
 	{
-		if (!draw_ready(list))
+		CommandListState* list = draw_ready(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -768,10 +789,11 @@ namespace ember::gpu
 		}
 	}
 
-	void draw_indirect_count(CommandList* list, BufferHandle args, u64 offset, BufferHandle count,
+	void CommandList::draw_indirect_count(BufferHandle args, u64 offset, BufferHandle count,
 	    u64 count_offset, u32 max_draw_count, u32 stride)
 	{
-		if (!draw_ready(list))
+		CommandListState* list = draw_ready(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -792,10 +814,11 @@ namespace ember::gpu
 		}
 	}
 
-	void draw_indexed_indirect_count(CommandList* list, BufferHandle args, u64 offset,
-	    BufferHandle count, u64 count_offset, u32 max_draw_count, u32 stride)
+	void CommandList::draw_indexed_indirect_count(BufferHandle args, u64 offset, BufferHandle count,
+	    u64 count_offset, u32 max_draw_count, u32 stride)
 	{
-		if (!draw_ready(list))
+		CommandListState* list = draw_ready(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -818,9 +841,10 @@ namespace ember::gpu
 		}
 	}
 
-	void dispatch(CommandList* list, u32 x, u32 y, u32 z)
+	void CommandList::dispatch(u32 x, u32 y, u32 z)
 	{
-		if (!dispatch_ready(list))
+		CommandListState* list = dispatch_ready(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -828,9 +852,10 @@ namespace ember::gpu
 		vkCmdDispatch(list->commands, x, y, z);
 	}
 
-	void dispatch_indirect(CommandList* list, BufferHandle args, u64 offset)
+	void CommandList::dispatch_indirect(BufferHandle args, u64 offset)
 	{
-		if (!dispatch_ready(list))
+		CommandListState* list = dispatch_ready(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -842,10 +867,11 @@ namespace ember::gpu
 		}
 	}
 
-	void copy_buffer(CommandList* list, BufferHandle src, u64 src_offset, BufferHandle dst,
+	void CommandList::copy_buffer(BufferHandle src, u64 src_offset, BufferHandle dst,
 	    u64 dst_offset, u64 size)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -877,10 +903,11 @@ namespace ember::gpu
 		vkCmdCopyBuffer2(list->commands, &copy);
 	}
 
-	void copy_buffer_to_texture(CommandList* list, BufferHandle src, u64 src_offset,
-	    TextureHandle dst, u32 mip, u32 layer)
+	void CommandList::copy_buffer_to_texture(BufferHandle src, u64 src_offset, TextureHandle dst,
+	    u32 mip, u32 layer)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -918,10 +945,11 @@ namespace ember::gpu
 		vkCmdCopyBufferToImage2(list->commands, &copy);
 	}
 
-	void copy_texture_to_buffer(CommandList* list, TextureHandle src, u32 mip, u32 layer,
+	void CommandList::copy_texture_to_buffer(TextureHandle src, u32 mip, u32 layer,
 	    BufferHandle dst, u64 dst_offset)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -959,9 +987,10 @@ namespace ember::gpu
 		vkCmdCopyImageToBuffer2(list->commands, &copy);
 	}
 
-	void fill_buffer(CommandList* list, BufferHandle dst, u64 offset, u64 size, u32 value)
+	void CommandList::fill_buffer(BufferHandle dst, u64 offset, u64 size, u32 value)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -979,9 +1008,10 @@ namespace ember::gpu
 		vkCmdFillBuffer(list->commands, target->buffer, offset, size, value);
 	}
 
-	void begin_zone(CommandList* list, const char* name, u32 color)
+	void CommandList::begin_zone(const char* name, u32 color)
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -1018,9 +1048,10 @@ namespace ember::gpu
 		++list->zone_depth;
 	}
 
-	void end_zone(CommandList* list)
+	void CommandList::end_zone()
 	{
-		if (!recording(list))
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
 		{
 			return;
 		}
@@ -1045,5 +1076,26 @@ namespace ember::gpu
 		{
 			vkCmdEndDebugUtilsLabelEXT(list->commands);
 		}
+	}
+
+	void CommandList::end()
+	{
+		CommandListState* list = recording(*this);
+		if (list == nullptr)
+		{
+			return;
+		}
+
+		EMBER_ASSERT_MSG(!list->inside_pass, "a render pass is still open");
+		EMBER_ASSERT_MSG(list->zone_depth == 0, "a GPU zone was begun but never ended");
+
+		if (vk::backend()->ctx.debug_utils && list->name != nullptr)
+		{
+			vkCmdEndDebugUtilsLabelEXT(list->commands);
+		}
+
+		EMBER_VK_CHECK(vkEndCommandBuffer(list->commands));
+		list->open = false;
+		list->ended = true;
 	}
 }

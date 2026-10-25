@@ -17,6 +17,7 @@
 #include <ember/containers/span.h>
 #include <ember/core/frame.h>
 #include <ember/core/types.h>
+#include <ember/gpu/commands.h>
 #include <ember/gpu/types.h>
 #include <ember/math/geometry.h>
 #include <ember/platform/window.h>
@@ -25,8 +26,6 @@
 
 namespace ember::gpu
 {
-	struct CommandList;
-
 #if NDEBUG
 	inline constexpr bool VALIDATION_DEFAULT = false;
 #else
@@ -217,7 +216,7 @@ namespace ember::gpu
 	// barriers, and uses on independent queues need the appropriate timeline waits.
 	struct SubmitDef
 	{
-		Span<CommandList* const> lists = {};
+		Span<const CommandList> lists = {};
 		Span<const Submission> waits = {};
 		Queue queue = Queue::Graphics;
 	};
@@ -284,24 +283,20 @@ namespace ember::gpu
 	void end_frame(Frame& frame);
 
 	// Opens a list for the named logical queue; submit it to that same queue.
-	// Keep name alive through the frame. Exhaustion logs and returns null. The
-	// caller owns recording until handing the ended list to a submitter.
-	[[nodiscard]] CommandList* begin_command_list(const Frame& frame, const char* name,
+	// Keep name alive through the frame. Exhaustion logs and returns an empty
+	// handle. The caller owns recording until handing the ended list to a submitter.
+	[[nodiscard]] CommandList begin_command_list(const Frame& frame, const char* name,
 	    Queue queue = Queue::Graphics);
-
-	// Ends recording after all passes and zones are closed. Submit the list once,
-	// from this job or another, before ending its frame.
-	void end_command_list(CommandList* list);
 
 	// Submits lists after the frame's uploads recorded so far. Upload barriers cover
 	// later graphics work; a separate queue waits on their graphics timeline point.
 	// Pass other submission dependencies in waits. Returns this queue's timeline point.
 	Submission submit(const Frame& frame, const SubmitDef& def);
 
-	inline Submission submit(const Frame& frame, CommandList* list)
+	inline Submission submit(const Frame& frame, CommandList list)
 	{
 		SubmitDef def;
-		def.lists = Span<CommandList* const>(&list, 1);
+		def.lists = Span<const CommandList>(&list, 1);
 		return submit(frame, def);
 	}
 

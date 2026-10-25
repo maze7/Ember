@@ -62,9 +62,9 @@ namespace ember::gpu
 		}
 
 		// Preserve preallocated native objects and the list's place in the slot.
-		void reset_list(CommandList& list)
+		void reset_list(CommandListState& list)
 		{
-			list = CommandList{.pool = list.pool,
+			list = CommandListState{.pool = list.pool,
 			    .commands = list.commands,
 			    .queue = list.queue,
 			    .slot = list.slot,
@@ -97,7 +97,7 @@ namespace ember::gpu
 		}
 
 		// Read timestamp pairs only after the frame's GPU work finishes.
-		void resolve_list_zones(vk::Backend& b, vk::Slot& slot, const CommandList& list)
+		void resolve_list_zones(vk::Backend& b, vk::Slot& slot, const CommandListState& list)
 		{
 			if (list.zone_count == 0)
 			{
@@ -192,14 +192,15 @@ namespace ember::gpu
 
 		// Hold the queue lock so states follow submission order. Ignore images this frame did
 		// not acquire; only its pending presents need final transitions.
-		void fold_backbuffer_states(vk::Slot& slot, Span<CommandList* const> lists)
+		void fold_backbuffer_states(vk::Slot& slot, Span<const CommandList> lists)
 		{
 			slot.lock.lock();
-			for (const CommandList* list : lists)
+			for (const CommandList& handle : lists)
 			{
+				const CommandListState* list = handle.state;
 				for (u32 i = 0; i < list->backbuffer_count; ++i)
 				{
-					const CommandList::BackbufferUse& use = list->backbuffers[i];
+					const CommandListState::BackbufferUse& use = list->backbuffers[i];
 					for (u32 p = 0; p < slot.present_count; ++p)
 					{
 						vk::PendingPresent& pending = slot.presents[p];
@@ -586,7 +587,7 @@ namespace ember::gpu
 			const u32 count = opened_count(*b, slot, q);
 			for (u32 i = 0; i < count; ++i)
 			{
-				CommandList& list = slot.lists[q][i];
+				CommandListState& list = slot.lists[q][i];
 				EMBER_VK_CHECK(vkResetCommandPool(b->ctx.device, list.pool, 0));
 				reset_list(list);
 			}
@@ -643,7 +644,7 @@ namespace ember::gpu
 			const u32 count = opened_count(*b, slot, q);
 			for (u32 i = 0; i < count; ++i)
 			{
-				const CommandList& list = slot.lists[q][i];
+				const CommandListState& list = slot.lists[q][i];
 				EMBER_ASSERT_MSG(!list.open, "a command list was still recording at end_frame");
 				if (list.ended && !list.submitted)
 				{
@@ -654,7 +655,7 @@ namespace ember::gpu
 		}
 
 		// Final transitions and unused-image clears need no caller-provided list.
-		CommandList& finish = slot.finish;
+		CommandListState& finish = slot.finish;
 		finish.frame_index = frame.index;
 		finish.open = true;
 
@@ -737,12 +738,12 @@ namespace ember::gpu
 		frames::end_stage(frame.index, Stage::Present);
 	}
 
-	CommandList* begin_command_list(const Frame& frame, const char* name, Queue queue)
+	CommandList begin_command_list(const Frame& frame, const char* name, Queue queue)
 	{
 		vk::Backend* b = vk::backend();
 		if (b == nullptr)
 		{
-			return nullptr;
+			return {};
 		}
 
 		EMBER_ASSERT(queue < Queue::Count);
@@ -761,10 +762,10 @@ namespace ember::gpu
 				EMBER_ERROR("gpu: frame {} opened more than {} {} command lists", frame.index,
 				    capacity, NAMES[q]);
 			}
-			return nullptr;
+			return {};
 		}
 
-		CommandList& list = slot.lists[q][index];
+		CommandListState& list = slot.lists[q][index];
 		list.frame_index = frame.index;
 		list.name = name;
 		list.open = true;
@@ -800,29 +801,7 @@ namespace ember::gpu
 			vkCmdBeginDebugUtilsLabelEXT(list.commands, &label);
 		}
 
-		return &list;
-	}
-
-	void end_command_list(CommandList* list)
-	{
-		vk::Backend* b = vk::backend();
-		if (b == nullptr || list == nullptr)
-		{
-			return;
-		}
-
-		EMBER_ASSERT_MSG(list->open, "end of a list that is not recording");
-		EMBER_ASSERT_MSG(!list->inside_pass, "a render pass is still open");
-		EMBER_ASSERT_MSG(list->zone_depth == 0, "a GPU zone was begun but never ended");
-
-		if (b->ctx.debug_utils && list->name != nullptr)
-		{
-			vkCmdEndDebugUtilsLabelEXT(list->commands);
-		}
-
-		EMBER_VK_CHECK(vkEndCommandBuffer(list->commands));
-		list->open = false;
-		list->ended = true;
+		return {.state = &list, .frame_index = frame.index};
 	}
 
 	Submission submit(const Frame& frame, const SubmitDef& def)
@@ -840,9 +819,11 @@ namespace ember::gpu
 		vk::Slot& slot = vk::slot_of(*b, frame);
 		EMBER_ASSERT_MSG(vk::is_open(slot), "a submit for a frame that has ended");
 
-		for (CommandList* list : def.lists)
+		for (const CommandList& handle : def.lists)
 		{
-			EMBER_ASSERT_MSG(list != nullptr && list->frame_index == frame.index,
+			CommandListState* list = handle.state;
+			EMBER_ASSERT_MSG(list != nullptr && handle.frame_index == frame.index &&
+			                     list->frame_index == frame.index,
 			    "a list of another frame");
 			EMBER_ASSERT_MSG(list->ended && !list->submitted,
 			    "a list not ended, or submitted twice");
@@ -940,7 +921,7 @@ namespace ember::gpu
 			{
 				commands[command_count++] = {
 				    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-				    .commandBuffer = def.lists[offset + i]->commands,
+				    .commandBuffer = def.lists[offset + i].state->commands,
 				};
 			}
 

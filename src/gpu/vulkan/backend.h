@@ -33,8 +33,9 @@ namespace ember::gpu
 	}
 
 	// One recording writer owns the command buffer, its private pool, and cached binding state
-	// between begin_command_list() and end_command_list(). The slot keeps them for reuse.
-	struct CommandList
+	// between begin_command_list() and CommandList::end(). The slot keeps them for reuse, and
+	// handles reach them through CommandList::state.
+	struct CommandListState
 	{
 		// The boot-created pool restricts recording and submission to this queue.
 		VkCommandPool pool = VK_NULL_HANDLE;
@@ -333,11 +334,11 @@ namespace ember::gpu::vk
 	{
 		// begin_command_list() claims these in order within the queue's table. Each list has a
 		// private command pool so recording jobs do not share one.
-		CommandList* lists[QUEUE_COUNT] = {};
+		CommandListState* lists[QUEUE_COUNT] = {};
 		std::atomic<u32> opened[QUEUE_COUNT] = {};
 
 		// end_frame() uses this list to prepare acquired images for presentation.
-		CommandList finish;
+		CommandListState finish;
 
 		// The frame using the slot, by number. Completion stamps its Stage::Gpu by it, whether or
 		// not the frame module has retired the frame's memory. Recording, uploads, acquisition

@@ -1029,7 +1029,7 @@ namespace ember::gpu
 			EMBER_ASSERT(limits.maxBoundDescriptorSets >= 2);
 		}
 
-		bool create_list(vk::Backend& b, CommandList& list, u32 family)
+		bool create_list(vk::Backend& b, CommandListState& list, u32 family)
 		{
 			const VkCommandPoolCreateInfo pool_info{
 			    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -1083,17 +1083,17 @@ namespace ember::gpu
 						continue;
 					}
 
-					slot.lists[q] = (CommandList*)memory::allocate(memory::Tag::Graphics,
-					    sizeof(CommandList) * capacity, alignof(CommandList));
+					slot.lists[q] = (CommandListState*)memory::allocate(memory::Tag::Graphics,
+					    sizeof(CommandListState) * capacity, alignof(CommandListState));
 					for (u32 i = 0; i < capacity; ++i)
 					{
 						::new ((void*)(slot.lists[q] + i))
-						    CommandList{.queue = (Queue)q, .slot = s, .index = index + i};
+						    CommandListState{.queue = (Queue)q, .slot = s, .index = index + i};
 					}
 					index += capacity;
 				}
 
-				slot.finish = CommandList{.queue = Queue::Graphics, .slot = s, .index = total};
+				slot.finish = CommandListState{.queue = Queue::Graphics, .slot = s, .index = total};
 				slot.zones = (ZoneTiming*)memory::allocate_zeroed(memory::Tag::Graphics,
 				    sizeof(ZoneTiming) * zone_capacity, alignof(ZoneTiming));
 			}

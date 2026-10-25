@@ -1,16 +1,17 @@
 #pragma once
 
-// Records into lists opened by gpu::begin_command_list(). Each list has one
-// writer, which may migrate between workers. End it before submission and stop
-// using its pointer before frame-slot reuse. Callers supply resource barriers,
-// cross-queue dependencies, and resource lifetimes.
+// Records into lists opened by gpu::begin_command_list(), through CommandList
+// handles. Each list has one writer, which may migrate between workers. End it
+// before submission and stop using the handle before frame-slot reuse. Callers
+// supply resource barriers, cross-queue dependencies, and resource lifetimes.
 //
 // Passes set an attachment-sized viewport and scissor. Vulkan flips viewport Y
 // to keep clip-space Y up. Redundant binds are skipped; changed constant offsets
 // bind at the next draw or dispatch.
 //
-// A non-recording list asserts in debug builds and is ignored otherwise. Other
-// pass, binding and resource preconditions remain the caller's responsibility.
+// A command on a handle that is not recording asserts in debug builds and is
+// ignored otherwise. Other pass, binding and resource preconditions remain the
+// caller's responsibility.
 
 #include <ember/gpu/types.h>
 
@@ -18,7 +19,8 @@
 
 namespace ember::gpu
 {
-	struct CommandList;
+	// The backend's storage for one list.
+	struct CommandListState;
 
 	// Selects pipeline stages, access masks and image layout for a transition.
 	enum class TextureState : u8
@@ -166,135 +168,152 @@ namespace ember::gpu
 	static_assert(sizeof(DrawIndirectArgs) == 16 && sizeof(DrawIndexedIndirectArgs) == 20 &&
 	              sizeof(DispatchIndirectArgs) == 12);
 
-	// Record outside render passes, using states this queue supports; transfer
-	// lists have no shader stages. Texture barriers also change layouts and transfer
-	// ownership between families. Buffers need no ownership transfer, but accesses
-	// on different queues still need submission waits.
-	void barrier(CommandList* list, Span<const TextureBarrier> textures,
-	    Span<const BufferBarrier> buffers = {});
-
-	inline void barrier(CommandList* list, const TextureBarrier& texture)
+	// A handle to a list opened by gpu::begin_command_list(). Copies refer to the
+	// same list, which its frame slot owns. An empty handle records nothing.
+	// Commands check frame_index against the list, which rejects a handle kept
+	// past slot reuse even once the list is recording for a later frame.
+	struct CommandList
 	{
-		barrier(list, Span<const TextureBarrier>(&texture, 1));
-	}
+		CommandListState* state = nullptr;
+		u64 frame_index = 0;
 
-	inline void barrier(CommandList* list, const BufferBarrier& buffer)
-	{
-		barrier(list, {}, Span<const BufferBarrier>(&buffer, 1));
-	}
+		explicit operator bool() const
+		{
+			return state != nullptr;
+		}
 
-	// Orders earlier writes before later accesses on this queue. Does not change
-	// image layouts or synchronize independent queues.
-	void memory_barrier(CommandList* list);
+		// Record outside render passes, using states this queue supports; transfer
+		// lists have no shader stages. Texture barriers also change layouts and transfer
+		// ownership between families. Buffers need no ownership transfer, but accesses
+		// on different queues still need submission waits.
+		void barrier(Span<const TextureBarrier> textures, Span<const BufferBarrier> buffers = {});
 
-	// Dispatches, copies, fills and explicit barriers belong outside render passes.
-	void begin_render_pass(CommandList* list, const RenderPassDef& def);
-	void end_render_pass(CommandList* list);
+		void barrier(const TextureBarrier& texture)
+		{
+			barrier(Span<const TextureBarrier>(&texture, 1));
+		}
 
-	// Framebuffer pixels from the top left, with Y increasing downward. Set within
-	// a pass and supply a positive viewport height; the backend handles the flip.
-	void set_viewport(CommandList* list, const Viewport& viewport);
-	void set_scissor(CommandList* list, const Rect& scissor);
+		void barrier(const BufferBarrier& buffer)
+		{
+			barrier({}, Span<const BufferBarrier>(&buffer, 1));
+		}
 
-	void bind_pipeline(CommandList* list, GraphicsPipelineHandle pipeline);
-	void bind_pipeline(CommandList* list, ComputePipelineHandle pipeline);
+		// Orders earlier writes before later accesses on this queue. Does not change
+		// image layouts or synchronize independent queues.
+		void memory_barrier();
 
-	// Copies a nonzero multiple of four bytes, up to PUSH_CONSTANT_BYTES, for all
-	// shader stages. Every pipeline shares the layout, so a bind need not precede it.
-	void push_constants(CommandList* list, const void* data, u32 size);
+		// Dispatches, copies, fills and explicit barriers belong outside render passes.
+		void begin_render_pass(const RenderPassDef& def);
+		void end_render_pass();
 
-	template <typename T>
-	void push_constants(CommandList* list, const T& data)
-	{
-		static_assert(std::is_trivially_copyable_v<T>, "push constants are raw bytes");
-		static_assert(sizeof(T) <= PUSH_CONSTANT_BYTES, "a push block exceeds the contract");
-		push_constants(list, &data, sizeof(T));
-	}
+		// Framebuffer pixels from the top left, with Y increasing downward. Set within
+		// a pass and supply a positive viewport height; the backend handles the flip.
+		void set_viewport(const Viewport& viewport);
+		void set_scissor(const Rect& scissor);
 
-	// Copies a nonempty block, at most MAX_CONSTANT_BLOCK_BYTES, into frame storage.
-	// The slot keeps its offset until set again; the next draw or dispatch binds it.
-	// Allocation failure logs and leaves the slot unchanged. Group slots by update
-	// frequency using CONSTANTS_FRAME, CONSTANTS_PASS and CONSTANTS_DRAW.
-	void set_constants(CommandList* list, u32 slot, const void* data, u32 size);
+		void bind_pipeline(GraphicsPipelineHandle pipeline);
+		void bind_pipeline(ComputePipelineHandle pipeline);
 
-	template <typename T>
-	void set_constants(CommandList* list, u32 slot, const T& data)
-	{
-		static_assert(std::is_trivially_copyable_v<T>, "constants are raw bytes");
-		static_assert(sizeof(T) <= MAX_CONSTANT_BLOCK_BYTES,
-		    "a constant block exceeds what every adapter guarantees");
-		set_constants(list, slot, &data, sizeof(T));
-	}
+		// Copies a nonzero multiple of four bytes, up to PUSH_CONSTANT_BYTES, for all
+		// shader stages. Every pipeline shares the layout, so a bind need not precede it.
+		void push_constants(const void* data, u32 size);
 
-	void bind_index_buffer(CommandList* list, BufferHandle buffer,
-	    IndexFormat format = IndexFormat::U32, u64 offset = 0);
+		template <typename T>
+		void push_constants(const T& data)
+		{
+			static_assert(std::is_trivially_copyable_v<T>, "push constants are raw bytes");
+			static_assert(sizeof(T) <= PUSH_CONSTANT_BYTES, "a push block exceeds the contract");
+			push_constants(&data, sizeof(T));
+		}
 
-	void draw(CommandList* list, u32 vertex_count, u32 instance_count = 1, u32 first_vertex = 0,
-	    u32 first_instance = 0);
+		// Copies a nonempty block, at most MAX_CONSTANT_BLOCK_BYTES, into frame storage.
+		// The slot keeps its offset until set again; the next draw or dispatch binds it.
+		// Allocation failure logs and leaves the slot unchanged. Group slots by update
+		// frequency using CONSTANTS_FRAME, CONSTANTS_PASS and CONSTANTS_DRAW.
+		void set_constants(u32 slot, const void* data, u32 size);
 
-	void draw_indexed(CommandList* list, u32 index_count, u32 instance_count = 1,
-	    u32 first_index = 0, i32 base_vertex = 0, u32 first_instance = 0);
+		template <typename T>
+		void set_constants(u32 slot, const T& data)
+		{
+			static_assert(std::is_trivially_copyable_v<T>, "constants are raw bytes");
+			static_assert(sizeof(T) <= MAX_CONSTANT_BLOCK_BYTES,
+			    "a constant block exceeds what every adapter guarantees");
+			set_constants(slot, &data, sizeof(T));
+		}
 
-	// Reads arguments at stride-byte intervals. The stride is a multiple of four
-	// and at least the argument structure's size; extra bytes can hold draw metadata.
-	void draw_indirect(CommandList* list, BufferHandle args, u64 offset, u32 draw_count,
-	    u32 stride = sizeof(DrawIndirectArgs));
+		void bind_index_buffer(BufferHandle buffer, IndexFormat format = IndexFormat::U32,
+		    u64 offset = 0);
 
-	void draw_indexed_indirect(CommandList* list, BufferHandle args, u64 offset, u32 draw_count,
-	    u32 stride = sizeof(DrawIndexedIndirectArgs));
+		void draw(u32 vertex_count, u32 instance_count = 1, u32 first_vertex = 0,
+		    u32 first_instance = 0);
 
-	// Takes the draw count from the GPU buffer at count_offset, capped by
-	// max_draw_count. Requires Caps::indirect_count and the matching argument layout.
-	void draw_indirect_count(CommandList* list, BufferHandle args, u64 offset, BufferHandle count,
-	    u64 count_offset, u32 max_draw_count, u32 stride = sizeof(DrawIndirectArgs));
+		void draw_indexed(u32 index_count, u32 instance_count = 1, u32 first_index = 0,
+		    i32 base_vertex = 0, u32 first_instance = 0);
 
-	void draw_indexed_indirect_count(CommandList* list, BufferHandle args, u64 offset,
-	    BufferHandle count, u64 count_offset, u32 max_draw_count,
-	    u32 stride = sizeof(DrawIndexedIndirectArgs));
+		// Reads arguments at stride-byte intervals. The stride is a multiple of four
+		// and at least the argument structure's size; extra bytes can hold draw metadata.
+		void draw_indirect(BufferHandle args, u64 offset, u32 draw_count,
+		    u32 stride = sizeof(DrawIndirectArgs));
 
-	void dispatch(CommandList* list, u32 x, u32 y = 1, u32 z = 1);
-	void dispatch_indirect(CommandList* list, BufferHandle args, u64 offset);
+		void draw_indexed_indirect(BufferHandle args, u64 offset, u32 draw_count,
+		    u32 stride = sizeof(DrawIndexedIndirectArgs));
 
-	void copy_buffer(CommandList* list, BufferHandle src, u64 src_offset, BufferHandle dst,
-	    u64 dst_offset, u64 size);
+		// Takes the draw count from the GPU buffer at count_offset, capped by
+		// max_draw_count. Requires Caps::indirect_count and the matching argument layout.
+		void draw_indirect_count(BufferHandle args, u64 offset, BufferHandle count,
+		    u64 count_offset, u32 max_draw_count, u32 stride = sizeof(DrawIndirectArgs));
 
-	// Copies one whole mip and layer using tightly packed buffer data, including
-	// block rows for BC formats. Transition the texture to CopyDst for uploads
-	// or CopySrc for readback, and synchronize the buffer's copy access too.
-	void copy_buffer_to_texture(CommandList* list, BufferHandle src, u64 src_offset,
-	    TextureHandle dst, u32 mip, u32 layer);
+		void draw_indexed_indirect_count(BufferHandle args, u64 offset, BufferHandle count,
+		    u64 count_offset, u32 max_draw_count, u32 stride = sizeof(DrawIndexedIndirectArgs));
 
-	void copy_texture_to_buffer(CommandList* list, TextureHandle src, u32 mip, u32 layer,
-	    BufferHandle dst, u64 dst_offset);
+		void dispatch(u32 x, u32 y = 1, u32 z = 1);
+		void dispatch_indirect(BufferHandle args, u64 offset);
 
-	// Fills whole u32 words, so offset and size must be multiples of four.
-	// Record outside a render pass with the required copy dependencies in place.
-	void fill_buffer(CommandList* list, BufferHandle dst, u64 offset, u64 size, u32 value);
+		void copy_buffer(BufferHandle src, u64 src_offset, BufferHandle dst, u64 dst_offset,
+		    u64 size);
 
-	// Pair every begin with an end before ending the list. Keep name alive until
-	// timing data is consumed. Capture labels remain available without timestamps.
-	void begin_zone(CommandList* list, const char* name, u32 color = 0);
-	void end_zone(CommandList* list);
+		// Copies one whole mip and layer using tightly packed buffer data, including
+		// block rows for BC formats. Transition the texture to CopyDst for uploads
+		// or CopySrc for readback, and synchronize the buffer's copy access too.
+		void copy_buffer_to_texture(BufferHandle src, u64 src_offset, TextureHandle dst, u32 mip,
+		    u32 layer);
+
+		void copy_texture_to_buffer(TextureHandle src, u32 mip, u32 layer, BufferHandle dst,
+		    u64 dst_offset);
+
+		// Fills whole u32 words, so offset and size must be multiples of four.
+		// Record outside a render pass with the required copy dependencies in place.
+		void fill_buffer(BufferHandle dst, u64 offset, u64 size, u32 value);
+
+		// Pair every begin with an end before ending the list. Keep name alive until
+		// timing data is consumed. Capture labels remain available without timestamps.
+		void begin_zone(const char* name, u32 color = 0);
+		void end_zone();
+
+		// Ends recording after all passes and zones are closed. Submit the list once,
+		// from this job or another, before ending its frame.
+		void end();
+	};
 
 	// Keep the scope inside the command list's recording lifetime.
 	class ZoneScope final
 	{
 	public:
-		ZoneScope(CommandList* list, const char* name, u32 color = 0) : m_list(list)
+		ZoneScope(CommandList list, const char* name, u32 color = 0) : m_list(list)
 		{
-			begin_zone(list, name, color);
+			list.begin_zone(name, color);
 		}
 
 		~ZoneScope()
 		{
-			end_zone(m_list);
+			m_list.end_zone();
 		}
 
 		ZoneScope(const ZoneScope&) = delete;
 		ZoneScope& operator=(const ZoneScope&) = delete;
 
 	private:
-		CommandList* m_list;
+		CommandList m_list;
 	};
 }
 
