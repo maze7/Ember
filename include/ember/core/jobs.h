@@ -1,22 +1,36 @@
 #pragma once
 
-// Fiber jobs based on Christian Gyrling's 2015 GDC talk on the Naughty Dog engine.
-// https://www.gdcvault.com/play/1022186/parallelizing-the-naughty-dog-engine
+// Fiber-based job system following the design presented by Christian Gyrling in his 2015 GDC talk
+// (https://www.gdcvault.com/play/1022186/parallelizing-the-naughty-dog-engine).
 //
-// A job is a function and borrowed data. Kick a batch with a Counter, carry on with independent
-// work, then wait when you need the results. Keep the data and counter alive until the jobs and
-// their waiters have finished.
+// A job is a function pointer and a void* of caller-owned data. Job batches can be queued by
+// calling kick(), which adds the batch size to a Counter. Each job decrements the Counter on
+// completion, and wait() returns once the Counter reaches zero.
 //
-// Waiting suspends the calling fiber and leaves its worker free to run other jobs. Jobs can kick
-// and wait for more jobs, even deep in a call stack.
+// Waiting doesn't block the worker thread; the calling fiber is parked and the worker picks up
+// another ready fiber or a new job in the meantime. This means you can safely wait anywhere,
+// including deep inside of a call stack.
 //
-// A job may resume on another worker after a wait. Re-read thread-local state afterwards, never
-// hold a spin lock across a wait, and keep thread-owned locks out of jobs. Use JobMutex when
-// contention should park a fiber. Main always stays on the thread that initialized the job system
-// (Worker 0).
+// A parked fiber is resumed by whichever worker gets to it first. A job can wake up on a different
+// thread than the one it went to sleep on. Anything thread-affine needs to be handled carefully:
 //
-// Send blocking work through kick_io(). It runs on a separate IO threads and reports completion to
-// the same counters, meaning workers can continue processing other jobs and resume with a wait.
+// - A thread_local read before a wait could be stale after it. Avoid thread_locals in jobs.
+//
+// - OS mutexes and condition variables track the owning thread. Don't use them in jobs; use a
+//   JobMutex instead, which spins briefly and then parks the fiber.
+//
+// - SpinMutex is acceptable for critical sections of a few instructions. Anything longer should be
+//	 a JobMutex so the worker can run other jobs while it waits. Never hold a SpinMutex across a
+//	 wait.
+//
+// The thread that calls jobs::initialize() becomes worker 0, and its stack is adopted as main's
+// fiber. Unlike other fibers, main only ever resumes on worker 0. Anything that must run on the
+// main OS thread (the platform layer, for one) is therefore called from main, not from a job.
+//
+// Nothing that blocks should be run on a worker thread through the job system. Operations like file
+// reads, socket IO, shader compilation, etc. should go through kick_io() to a small pool of IO
+// threads that run outside the scheduler. Jobs that need to wait on blocking work can wait on a
+// Counter signaled by the IO threads like any other job.
 
 #include <ember/containers/span.h>
 #include <ember/core/macros.h>

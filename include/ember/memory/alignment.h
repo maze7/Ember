@@ -1,7 +1,6 @@
 #pragma once
 
 // Alignment helpers shared by allocators, pools, and GPU resources.
-// Use <bit> directly for the operations it already provides.
 
 #include <ember/core/macros.h>
 #include <ember/core/types.h>
