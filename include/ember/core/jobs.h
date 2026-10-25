@@ -1,13 +1,22 @@
 #pragma once
 
-// Fiber jobs based on Christian Gyrling's 2015 GDC design. Counters join work by parking the
-// waiting fiber while its worker runs other jobs. Job data and counters remain caller-owned.
+// Fiber jobs based on Christian Gyrling's 2015 GDC talk on the Naughty Dog engine.
+// https://www.gdcvault.com/play/1022186/parallelizing-the-naughty-dog-engine
 //
-// Main resumes on worker 0, the thread that initialized the scheduler. Other fibers may migrate:
-// re-read thread-local state after a wait, and never hold a spin lock or thread-owned mutex
-// across one. Use JobMutex for contention that should park a fiber.
+// A job is a function and borrowed data. Kick a batch with a Counter, carry on with independent
+// work, then wait when you need the results. Keep the data and counter alive until the jobs and
+// their waiters have finished.
 //
-// Blocking operations belong on I/O threads through kick_io(), never on a worker.
+// Waiting suspends the calling fiber and leaves its worker free to run other jobs. Jobs can kick
+// and wait for more jobs, even deep in a call stack.
+//
+// A job may resume on another worker after a wait. Re-read thread-local state afterwards, never
+// hold a spin lock across a wait, and keep thread-owned locks out of jobs. Use JobMutex when
+// contention should park a fiber. Main always stays on the thread that initialized the job system
+// (Worker 0).
+//
+// Send blocking work through kick_io(). It runs on a separate IO threads and reports completion to
+// the same counters, meaning workers can continue processing other jobs and resume with a wait.
 
 #include <ember/containers/span.h>
 #include <ember/core/macros.h>
