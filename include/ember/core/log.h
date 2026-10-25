@@ -1,10 +1,8 @@
 #pragma once
 
-// Logging through fixed-size records and a bounded ring. Normal writes queue a record or drop
-// it when full; callers choose when and where to flush. Errors flush synchronously, and writes
-// before initialization or after shutdown go directly to sinks, so those paths can block.
-// Stop producers and flushers before shutdown. Sink calls are serialized and must not reenter
-// the logger while its sink lock is held.
+// Engine-wide multithreaded logger. Logs are fixed-size records stored in a bounded ring. Normal
+// writes queue a record or drop when full. Records are drained on a dedicated IO thread and passed
+// to sinks. Sink calls are serialized and must not re-enter the logger while its sink lock is held.
 
 #include <ember/core/types.h>
 
