@@ -74,7 +74,7 @@ namespace ember::platform
 	// before the frame samples anything.
 	bool pump(InputState& input);
 
-	WindowHandle create_window(const WindowDef& def);
+	WindowHandle create_window(const WindowDef& def = {});
 	void destroy_window(WindowHandle window);
 
 	// The size of the window's back buffer. 0x0 for a minimized window.
