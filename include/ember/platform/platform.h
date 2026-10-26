@@ -6,8 +6,8 @@
 
 #include <ember/containers/string.h>
 #include <ember/core/types.h>
+#include <ember/input/input.h>
 #include <ember/math/geometry.h>
-#include <ember/platform/input.h>
 #include <ember/platform/window.h>
 
 namespace ember::platform

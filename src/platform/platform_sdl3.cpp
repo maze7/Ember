@@ -13,7 +13,7 @@
 #include <ember/core/log.h>
 #include <ember/core/time.h>
 #include <ember/memory/heap.h>
-#include <platform/input_state.h>
+#include <input/input_state.h>
 #include <platform/wsi.h>
 
 #include <cmath>

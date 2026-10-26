@@ -1,4 +1,4 @@
-#include <platform/input_state.h>
+#include <input/input_state.h>
 
 #include <ember/core/macros.h>
 

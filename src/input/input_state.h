@@ -5,7 +5,7 @@
 // and clears transient state.
 
 #include <ember/core/types.h>
-#include <ember/platform/input.h>
+#include <ember/input/input.h>
 
 namespace ember::platform
 {

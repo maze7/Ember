@@ -36,8 +36,9 @@ ember_add_module(core
 if(EMBER_BUILD_PLATFORM)
 	ember_add_module(platform
 		SOURCES
-			platform/input_state.cpp
 			platform/platform_sdl3.cpp
+			input/input_state.cpp
+			input/actions.cpp
 		PUBLIC_DEPS
 			ember::core
 		PRIVATE_DEPS
