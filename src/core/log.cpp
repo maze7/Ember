@@ -1,4 +1,5 @@
 #include <ember/containers/mpmc_queue.h>
+#include <ember/core/jobs.h>
 #include <ember/core/log.h>
 #include <ember/core/macros.h>
 #include <ember/core/spin_mutex.h>
@@ -28,6 +29,11 @@ namespace ember::log
 		constinit std::atomic<bool> s_ready{false};
 		constinit std::atomic<u8> s_level{(u8)LogLevel::Trace};
 		constinit std::atomic<u64> s_dropped{0};
+
+		// Set while a drain task is queued or running on an IO thread. A writer that finds it
+		// set leaves its record for the queued drain.
+		constinit std::atomic<bool> s_drain_pending{false};
+		jobs::Counter s_drain_done;
 
 		// Everything a sink touches is under this lock: the sinks themselves, the console, and
 		// the count of drops already reported.
@@ -163,10 +169,57 @@ namespace ember::log
 		}
 	}
 
+	// Runs on an IO thread. Each pass empties the ring, then clears the flag.
+	void drain(void*)
+	{
+		for (;;)
+		{
+			flush();
+
+			s_drain_pending.exchange(false, std::memory_order_acq_rel);
+
+			// Push tickets are counted, so a record left by a writer tha saw the flag shows up here
+			// and zero means empty. A ticket not yet published costs one more pass.
+			if (s_ring.size_hint() == 0)
+			{
+				return;
+			}
+
+			// A writer that got here first has kicked the next drain.
+			if (s_drain_pending.exchange(true, std::memory_order_acq_rel))
+			{
+				return;
+			}
+		}
+	}
+
+	// Hands the ring to an IO thread unless a drain is already pending. With no IO thread to take
+	// it, the writer drains on the spot, so a queued record always logs.
+	void kick_drain()
+	{
+		if (s_drain_pending.exchange(true, std::memory_order_acq_rel))
+			return;
+
+		jobs::JobDef job{
+		    .fn = drain,
+		    .name = "log drain",
+		    .priority = jobs::JobPriority::Low,
+		};
+
+		if (jobs::kick_io(job, s_drain_done) != jobs::IoKickError::None)
+		{
+			s_drain_pending.exchange(false, std::memory_order_acq_rel);
+			flush();
+		}
+	}
+
 	bool initialize(const LogDef& def)
 	{
 		EMBER_ASSERT_MSG(!s_ready.load(std::memory_order_relaxed),
 		    "the logger is initialized once");
+
+		EMBER_ASSERT_MSG(s_drain_done.is_complete(),
+		    "a log drain is still running: shut the job system down first");
 
 		if (def.ring_capacity < 2 || !std::has_single_bit(def.ring_capacity))
 		{
@@ -252,23 +305,27 @@ namespace ember::log
 	{
 		const LogRecord record = make_record(level, where, format, args);
 
-		if (s_ready.load(std::memory_order_acquire))
+		if (!s_ready.load(std::memory_order_acquire))
 		{
-			if (!s_ring.try_push(record))
-			{
-				s_dropped.fetch_add(1, std::memory_order_relaxed);
-			}
-
-			if (level == LogLevel::Error)
-			{
-				flush();
-			}
+			s_sink_lock.lock();
+			emit(record);
+			s_sink_lock.unlock();
 
 			return;
 		}
 
-		s_sink_lock.lock();
-		emit(record);
-		s_sink_lock.unlock();
+		if (!s_ring.try_push(record))
+		{
+			s_dropped.fetch_add(1, std::memory_order_relaxed);
+		}
+
+		// An error reaches the sinks before its caller continues, which may be toward a crash.
+		if (level == LogLevel::Error)
+		{
+			flush();
+			return;
+		}
+
+		kick_drain();
 	}
 }

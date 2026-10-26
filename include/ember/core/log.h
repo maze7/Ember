@@ -100,7 +100,7 @@ namespace ember
 		// Registers one of four sinks beside the console. No removal; user must outlive all calls.
 		bool add_sink(Sink sink, void* user);
 
-		// Drains under the sink lock on the calling thread. Sink I/O may block.
+		// Drains under the sink lock on the calling thread. Sink IO may block.
 		void flush();
 
 		// Records dropped since initialize(); flush() also reports new drops to the sinks.
