@@ -7,7 +7,7 @@ Ember is a modular C++20 3D game engine designed for high-performance rendering 
 - Explicit ownership, resource lifetimes, and synchronization.
 - Memory budgets defined at boot, with allocations grouped by lifetime.
 - Fiber-based job scheduling, with blocking IO kept off worker threads.
-- Data-oriented storae and batch processing on hot paths.
+- Data-oriented storage and batch processing on hot paths.
 - Small modules with clear dependencies and explicit lifecycles.
 - Cooked runtime data and hot reload for fast iteration.
 - Profiling, validation, and diagnostics built into the foundation.
