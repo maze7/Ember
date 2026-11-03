@@ -93,8 +93,8 @@ namespace ember::frames
 
 		for (u32 i = 0; i < def.in_flight; ++i)
 		{
-			s_frames.arenas[i] = memory::new_object<memory::Arena>(heap, MemoryTag::Engine);
-			s_frames.arenas[i]->initialize(memory::block_heap(), "frame");
+			s_frames.arenas[i] =
+			    memory::new_object<memory::Arena>(heap, MemoryTag::Engine, "frame");
 		}
 
 		s_frames.previous_begin_ns = 0;
@@ -122,7 +122,6 @@ namespace ember::frames
 		memory::Allocator* heap = memory::heap();
 		for (u32 i = 0; i < s_frames.def.in_flight; ++i)
 		{
-			s_frames.arenas[i]->shutdown();
 			memory::delete_object(heap, s_frames.arenas[i]);
 			s_frames.arenas[i] = nullptr;
 		}
@@ -184,7 +183,7 @@ namespace ember::frames
 		frame.dt = (f32)dt_ns * 1.0e-9f;
 		frame.time_ns = now;
 		frame.memory = arena;
-		arena->begin(memory::block_tag(memory::Lifetime::Frame, index));
+		arena->begin(memory::tagged_heap(), memory::block_tag(memory::Lifetime::Frame, index));
 
 		entry.completed_stages.store(0, std::memory_order_relaxed);
 		return frame;
@@ -215,7 +214,7 @@ namespace ember::frames
 		    "retire of a frame that is not live");
 
 		const memory::BlockTag tag = frame.memory->end();
-		(void)memory::block_heap()->free(tag);
+		(void)memory::tagged_heap().free(tag);
 		frame.memory = nullptr;
 		--s_frames.live;
 	}

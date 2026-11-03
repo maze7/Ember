@@ -87,8 +87,8 @@ namespace ember::memory
 	bool initialize_thread();
 	void shutdown_thread();
 
-	// The shared block heap used by arenas between initialize() and shutdown().
-	TaggedHeap* block_heap();
+	// The shared tagged heap used by arenas and other allocators.
+	TaggedHeap& tagged_heap();
 
 	// Returns a page-aligned, committed range, or null if the partition is full.
 	// Size rounds up to whole pages. The caller decommits each stack's guard page.

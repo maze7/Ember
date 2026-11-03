@@ -10,7 +10,7 @@ namespace ember::memory
 {
 	namespace
 	{
-		constinit TaggedHeap s_blocks;
+		constinit TaggedHeap* s_blocks = nullptr;
 		constinit std::atomic<bool> s_initialized{false};
 
 		// Keep the original range for release(). Each allocator remembers the
@@ -35,20 +35,22 @@ namespace ember::memory
 			return false;
 		}
 
+		EMBER_ASSERT_MSG(std::has_single_bit(def.block_size), "block_size must be a power of two");
+
 		// Keep each partition page-aligned so it can be protected independently.
 		// Commit the whole range now so allocators need no further commit calls.
+		// The block partition is whole blocks, rounded to a page for small blocks.
 		const size_t page = virtual_memory::page_size();
-		const size_t heap = align_up((size_t)def.heap_capacity, page);
-		const size_t blocks =
-		    TaggedHeap::region_size((size_t)def.block_capacity, (size_t)def.block_size);
-		const size_t stacks = align_up((size_t)def.stack_capacity, page);
-		const size_t development = align_up((size_t)def.development_capacity, page);
-
-		// The block region is whole pages for any block of a page or more; rounding
-		// its span keeps the partitions after it page-aligned for smaller blocks.
-		const size_t blocks_span = align_up(blocks, page);
-		const size_t total = align_up(heap + blocks_span + stacks + development,
+		const u64 block_count = align_up(def.block_capacity, def.block_size) / def.block_size;
+		const size_t heap_size = align_up(def.heap_capacity, page);
+		const size_t blocks_size = align_up(block_count * def.block_size, page);
+		const size_t stacks_size = align_up(def.stack_capacity, page);
+		const size_t development_size = align_up(def.development_capacity, page);
+		const size_t total = align_up(heap_size + blocks_size + stacks_size + development_size,
 		    virtual_memory::allocation_granularity());
+
+		EMBER_ASSERT_MSG(block_count != 0 && block_count <= TaggedHeap::MAX_BLOCKS,
+		    "block_capacity must hold between one block and TaggedHeap::MAX_BLOCKS");
 
 		u8* base = (u8*)virtual_memory::reserve(total);
 		if (base == nullptr || !virtual_memory::commit(base, total))
@@ -66,15 +68,16 @@ namespace ember::memory
 
 		s_reservation = base;
 		s_reservation_size = total;
+		s_stack_capacity = stacks_size;
 
-		u8* stacks_base = base + heap + blocks_span;
-		u8* development_base = development != 0 ? stacks_base + stacks : nullptr;
-		if (!s_blocks.initialize(base + heap, blocks, (size_t)def.block_size) ||
-		    !internal::heap_initialize(base, heap, development_base, development) ||
+		u8* blocks_base = base + heap_size;
+		u8* stacks_base = blocks_base + blocks_size;
+		u8* development_base = development_size != 0 ? stacks_base + stacks_size : nullptr;
+
+		if (!internal::heap_initialize(base, heap_size, development_base, development_size) ||
 		    !initialize_thread())
 		{
 			std::fprintf(stderr, "[memory] the memory map could not be brought up\n");
-			s_blocks.shutdown();
 			internal::heap_shutdown();
 			(void)virtual_memory::release(base, total);
 			s_reservation = nullptr;
@@ -83,8 +86,9 @@ namespace ember::memory
 			return false;
 		}
 
-		s_stacks = stacks != 0 ? stacks_base : nullptr;
-		s_stack_capacity = stacks;
+		s_blocks = new_object<TaggedHeap>(heap(), MemoryTag::Engine, blocks_base, block_count,
+		    def.block_size);
+		s_stacks = stacks_size != 0 ? stacks_base : nullptr;
 		s_stacks_used = 0;
 		s_stacks_peak = 0;
 
@@ -98,7 +102,8 @@ namespace ember::memory
 			return;
 		}
 
-		s_blocks.shutdown();
+		delete_object(heap(), s_blocks);
+		s_blocks = nullptr;
 		shutdown_thread();
 
 		// The report needs the live allocation headers, so run it before tearing
@@ -165,11 +170,11 @@ namespace ember::memory
 		Arena::unregister_thread();
 	}
 
-	TaggedHeap* block_heap()
+	TaggedHeap& tagged_heap()
 	{
 		EMBER_ASSERT_MSG(s_initialized.load(std::memory_order_acquire),
 		    "the block allocator is valid between initialize and shutdown");
-		return &s_blocks;
+		return *s_blocks;
 	}
 
 	MemoryMap map()
@@ -177,10 +182,13 @@ namespace ember::memory
 		MemoryMap map;
 		internal::heap_map(map.heap, map.development, map.overflowed);
 
-		const u64 block_size = s_blocks.block_size();
-		map.blocks.used_bytes = (u64)s_blocks.blocks_in_use() * block_size;
-		map.blocks.peak_bytes = (u64)s_blocks.peak_blocks() * block_size;
-		map.blocks.capacity = s_blocks.capacity();
+		if (s_blocks != nullptr)
+		{
+			const u64 block_size = s_blocks->block_size();
+			map.blocks.used_bytes = s_blocks->blocks_in_use() * block_size;
+			map.blocks.peak_bytes = s_blocks->peak_blocks() * block_size;
+			map.blocks.capacity = s_blocks->capacity();
+		}
 
 		map.stacks.used_bytes = s_stacks_used;
 		map.stacks.peak_bytes = s_stacks_peak;

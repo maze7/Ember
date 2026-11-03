@@ -1,117 +1,32 @@
 #include <ember/core/profile.h>
-#include <ember/memory/alignment.h>
 #include <ember/memory/tagged_heap.h>
-#include <ember/memory/virtual_memory.h>
 
 #include <algorithm>
 #include <bit>
 #include <cstring>
-#include <memory>
 
 namespace ember::memory
 {
-	namespace
+	constexpr u32 NO_BLOCK = ~0u;
+
+	TaggedHeap::TaggedHeap(u8* blocks, u32 block_count, size_t block_size)
+	    : m_base(blocks), m_capacity(block_count * block_size), m_block_size(block_size),
+	      m_block_count(block_count), m_word_count((block_count + 63) / 64)
 	{
-		constexpr u32 NO_BLOCK = ~0u;
-
-		// free() and blocks_owned() scan every block, so this limit is well above
-		// the intended pool size.
-		constexpr size_t MAX_BLOCKS = size_t{1} << 24;
-
-		// Round the tables to whole pages so the block payload starts page-aligned.
-		size_t bookkeeping_size(size_t blocks)
-		{
-			const size_t words = (blocks + 63) / 64;
-			return align_up(words * sizeof(u64) + blocks * sizeof(std::atomic<BlockTag>),
-			    virtual_memory::page_size());
-		}
-	}
-
-	size_t TaggedHeap::region_size(size_t capacity, size_t block_size)
-	{
+		EMBER_ASSERT(blocks != nullptr);
+		EMBER_ASSERT(block_count != 0 && block_count <= MAX_BLOCKS);
 		EMBER_ASSERT(std::has_single_bit(block_size));
 
-		const size_t rounded = align_up(capacity, block_size);
-		return bookkeeping_size(rounded / block_size) + rounded;
+		for (u32 block = 0; block < block_count; ++block)
+		{
+			m_free[block / 64] |= u64{1} << (block % 64);
+		}
 	}
 
 	TaggedHeap::~TaggedHeap()
 	{
-		shutdown();
-	}
-
-	bool TaggedHeap::initialize(void* region, size_t size, size_t block_size)
-	{
-		EMBER_ASSERT_MSG(m_base == nullptr, "initialize runs once");
-		EMBER_ASSERT(region != nullptr);
-		EMBER_ASSERT(std::has_single_bit(block_size));
-		EMBER_ASSERT(is_aligned(region, virtual_memory::page_size()));
-
-		if (m_base != nullptr || region == nullptr || !std::has_single_bit(block_size))
-		{
-			return false;
-		}
-
-		// The tables grow with the block count. Start with the whole region and give
-		// back blocks until both the payload and its bookkeeping fit.
-		size_t blocks = size / block_size;
-		while (blocks > 0 && bookkeeping_size(blocks) + blocks * block_size > size)
-		{
-			--blocks;
-		}
-
-		if (blocks == 0 || blocks > MAX_BLOCKS)
-		{
-			return false;
-		}
-
-		const u32 words = (u32)((blocks + 63) / 64);
-		const size_t bookkeeping = bookkeeping_size(blocks);
-		u8* memory = (u8*)region;
-
-		m_free = reinterpret_cast<u64*>(memory);
-		m_tags = reinterpret_cast<std::atomic<BlockTag>*>(memory + words * sizeof(u64));
-
-		for (u32 word = 0; word < words; ++word)
-		{
-			m_free[word] = 0;
-		}
-
-		for (u32 block = 0; block < blocks; ++block)
-		{
-			m_free[block / 64] |= u64{1} << (block % 64);
-			std::construct_at(&m_tags[block], NO_BLOCK_TAG);
-		}
-
-		m_base = memory + bookkeeping;
-		m_capacity = blocks * block_size;
-		m_block_size = block_size;
-		m_block_count = (u32)blocks;
-		m_word_count = words;
-		m_hint = 0;
-		return true;
-	}
-
-	void TaggedHeap::shutdown()
-	{
-		if (m_base == nullptr)
-		{
-			return;
-		}
-
 		EMBER_ASSERT_MSG(blocks_in_use() == 0,
-		    "a tag still owns blocks at shutdown; every lifetime must be freed first");
-
-		m_free = nullptr;
-		m_tags = nullptr;
-		m_base = nullptr;
-		m_capacity = 0;
-		m_block_size = 0;
-		m_block_count = 0;
-		m_word_count = 0;
-		m_hint = 0;
-		m_blocks_in_use.store(0, std::memory_order_relaxed);
-		m_peak_blocks.store(0, std::memory_order_relaxed);
+		    "a tag still owns blocks; every lifetime must be freed before destruction");
 	}
 
 	u32 TaggedHeap::find_run(u32 count) const
@@ -153,8 +68,7 @@ namespace ember::memory
 
 	void* TaggedHeap::allocate(u32 count, BlockTag tag)
 	{
-		EMBER_PROFILE_SCOPE_C("BlockAllocator::allocate", PROFILE_COLOR_MEMORY);
-		EMBER_ASSERT(m_base != nullptr);
+		EMBER_PROFILE_SCOPE_C("TaggedHeap::allocate", PROFILE_COLOR_MEMORY);
 		EMBER_ASSERT(tag != NO_BLOCK_TAG);
 		EMBER_ASSERT(count != 0);
 
@@ -196,8 +110,7 @@ namespace ember::memory
 
 	u32 TaggedHeap::free(BlockTag tag)
 	{
-		EMBER_PROFILE_SCOPE_C("BlockAllocator::free", PROFILE_COLOR_MEMORY);
-		EMBER_ASSERT(m_base != nullptr);
+		EMBER_PROFILE_SCOPE_C("TaggedHeap::free", PROFILE_COLOR_MEMORY);
 		EMBER_ASSERT(tag != NO_BLOCK_TAG);
 
 #if EMBER_MEMORY_TRACKING >= 2

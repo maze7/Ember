@@ -61,28 +61,14 @@ namespace ember::memory
 			u32 threads = 0;
 		};
 
-		Arena() = default;
+		Arena(const char* name = "arena");
 		~Arena() override;
 
 		Arena(const Arena&) = delete;
 		Arena& operator=(const Arena&) = delete;
 
-		// The block heap and diagnostic name must outlive the arena's use of them.
-		// Call begin() before allocating.
-		void initialize(TaggedHeap* blocks, const char* name);
-
-		// Returns blocks still owned by the current tag, then detaches from the heap.
-		// All users must have finished first. Earlier tags remain the caller's
-		// responsibility, even if this arena has already started another lifetime.
-		void shutdown();
-
-		// Starts allocating under tag. Finish the previous producers before resetting
-		// the slots, and publish this state before starting new ones.
-		// Blocks belonging to earlier tags remain available to their readers.
-		void begin(BlockTag tag);
-
-		// Ends allocation after all producers have finished and returns the tag.
-		// The caller frees it once the remaining readers have finished too.
+		// Blocks are requested from [heap] under [tag] between begin() and end().
+		void begin(TaggedHeap& heap, BlockTag tag);
 		BlockTag end();
 
 		// Register before using any arena and release the slot when the thread stops
@@ -96,9 +82,10 @@ namespace ember::memory
 		// must look up that worker's slot rather than keep an earlier TLS lookup.
 		static EMBER_NOINLINE u32 thread_slot();
 
-		// Requires an active lifetime. A zero-byte request consumes one byte so it
-		// still gets a distinct live address. Shipping builds omit tag accounting.
-		[[nodiscard]] EMBER_FINLINE void* allocate(MemoryTag tag, size_t size,
+		// Requires an active lifetime. A zero-byte request consumes one byte so it still gets a
+		// distinct live address. Returns null when the heap has no run of free blocks for the
+		// request. Shipping builds omit tag accounting.
+		[[nodiscard]] EMBER_FINLINE void* try_allocate(MemoryTag tag, size_t size,
 		    size_t alignment = DEFAULT_ALIGNMENT)
 		{
 			EMBER_ASSERT_MSG(m_active, "allocating from an arena between end() and begin()");
@@ -106,20 +93,39 @@ namespace ember::memory
 
 			Slot& slot = current_slot();
 			const size_t bytes = size == 0 ? 1 : size;
-			u8* aligned = align_up(slot.cursor, alignment);
 
-			slot.bytes += bytes;
-			charge(slot, tag, bytes);
+			u8* aligned = align_offset(slot.cursor, alignment);
 
 			// Check the aligned cursor before subtracting: alignment can carry it past
 			// the block. An empty slot also needs a refill.
 			if (aligned >= slot.end || (size_t)(slot.end - aligned) < bytes) [[unlikely]]
 			{
-				return refill(slot, bytes, alignment);
+				aligned = refill(slot, bytes, alignment);
+				if (aligned == nullptr)
+				{
+					return nullptr;
+				}
+			}
+			else
+			{
+				slot.cursor = aligned + bytes;
 			}
 
-			slot.cursor = aligned + bytes;
+			slot.bytes += bytes;
+			charge(slot, tag, bytes);
 			return aligned;
+		}
+
+		[[nodiscard]] EMBER_FINLINE void* allocate(MemoryTag tag, size_t size,
+		    size_t alignment = DEFAULT_ALIGNMENT)
+		{
+			void* memory = try_allocate(tag, size, alignment);
+			if (memory == nullptr) [[unlikely]]
+			{
+				exhausted(size, alignment);
+			}
+
+			return memory;
 		}
 
 		// Arena tracking records subsystem totals, not individual allocation sites.
@@ -214,11 +220,25 @@ namespace ember::memory
 			return m_slots[slot];
 		}
 
-		void* refill(Slot& slot, size_t bytes, size_t alignment);
+		// Pads cursor so its offset from the heap base is a multiple of alignment.
+		// A null cursor lands below the slot's end and takes the refill path.
+		EMBER_FINLINE u8* align_offset(u8* cursor, size_t alignment) const
+		{
+			const uintptr_t address = reinterpret_cast<uintptr_t>(cursor);
+			return reinterpret_cast<u8*>(address + ((m_origin - address) & (alignment - 1)));
+		}
+
+		u8* refill(Slot& slot, size_t bytes, size_t alignment);
+		size_t blocks_needed(size_t bytes, size_t alignment) const;
 		void forget_blocks();
+
+		[[noreturn]] void exhausted(size_t size, size_t alignment) const;
 
 		Slot m_slots[MAX_THREADS];
 		TaggedHeap* m_tagged_heap = nullptr;
+
+		// The heap's base address, which offsets are aligned against.
+		uintptr_t m_origin = 0;
 		BlockTag m_tag = NO_BLOCK_TAG;
 		const char* m_name = "arena";
 		bool m_active = false;

@@ -1,7 +1,7 @@
 #pragma once
 
-// Fixed-size blocks reclaimed in groups, following the tagged heap in Christian
-// Gyrling's GDC 2015 talk about parallelizing the Naughty Dog engine.
+// Fixed-size blocks reclaimed in groups, following the tagged heap design
+// in Christian Gyrling's GDC 2015 talk about parallelizing the Naughty Dog engine.
 //
 // Allocators claim blocks under a tag and divide them into smaller allocations.
 // Once the lifetime ends, free() returns every block carrying its tag.
@@ -36,7 +36,7 @@ namespace ember::memory
 		// Until the last reader of a frame has finished.
 		Frame, // TODO(Cal): remove this after refactoring to TaggedHeap
 
-		//
+		// Per-stage frame lifetimes
 		Update,
 		Render,
 		Gpu,
@@ -46,9 +46,8 @@ namespace ember::memory
 
 	EMBER_ENUM_NAMES(Lifetime, "None", "Permanent", "Level", "Frame", "Update", "Render", "Gpu");
 
-	// Identifies a group of blocks to reclaim together. The upper eight bits hold
-	// the lifetime and the remaining 56 hold its sequence. memory::Tag instead
-	// identifies the subsystem using an allocation.
+	// Identifies a group of blocks, used to wholesale free them at once. The upper eight bits hold
+	// the lifetime and the remaining 56 hold its sequence.
 	using BlockTag = u64;
 
 	inline constexpr BlockTag NO_BLOCK_TAG = 0;
@@ -74,31 +73,23 @@ namespace ember::memory
 		return tag & BLOCK_TAG_SEQUENCE_MASK;
 	}
 
-	// The free bits and owner tags live at the front of the supplied region.
 	// The lock protects free bits and ownership changes. Atomic owner tags let
 	// diagnostics inspect ownership without that lock. Reading block contents
 	// still requires the caller's lifetime synchronization.
 	class TaggedHeap final
 	{
 	public:
-		TaggedHeap() = default;
+		static constexpr u32 MAX_BLOCKS = 4096;
+
+		// Builds a pool over [block_count] whole blocks of a power-of-two size at
+		// [blocks], in any memory the CPU can write. The count is at most MAX_BLOCKS.
+		TaggedHeap(u8* blocks, u32 block_count, size_t block_size);
+
+		// Every tag must have been freed. Debug builds check for owned blocks.
 		~TaggedHeap();
 
 		TaggedHeap(const TaggedHeap&) = delete;
 		TaggedHeap& operator=(const TaggedHeap&) = delete;
-
-		// Storage needed for capacity bytes of blocks and their bookkeeping.
-		// The payload rounds up to whole blocks and the bookkeeping to whole pages.
-		static size_t region_size(size_t capacity, size_t block_size);
-
-		// Uses an already committed, page-aligned region for tables and blocks.
-		// Returns false if the region or block size cannot form a valid pool.
-		[[nodiscard]] bool initialize(void* region, size_t size, size_t block_size);
-
-		// Drops the views into storage owned by the reservation. All clients must
-		// have stopped and every tag must have been freed first.
-		// Debug builds check for blocks that are still owned.
-		void shutdown();
 
 		// Claims the lowest available run of count consecutive blocks under tag.
 		// Holds the pool lock. Returns null if no suitable run remains.
@@ -123,6 +114,13 @@ namespace ember::memory
 		// Samples the owner table for telemetry and tests. Concurrent ownership
 		// changes mean the result is not a synchronized snapshot.
 		u32 blocks_owned(BlockTag tag) const;
+
+		// The first block. A mapped pool turns a pointer into its buffer offset by
+		// subtracting this.
+		u8* base() const
+		{
+			return m_base;
+		}
 
 		size_t block_size() const
 		{
@@ -160,10 +158,9 @@ namespace ember::memory
 		SpinMutex m_lock;
 
 		// A set bit means free. A free block's owner is NO_BLOCK_TAG.
-		u64* m_free = nullptr;
-		std::atomic<BlockTag>* m_tags = nullptr;
+		u64 m_free[MAX_BLOCKS / 64] = {};
+		std::atomic<BlockTag> m_tags[MAX_BLOCKS];
 
-		// m_base starts after the bookkeeping and points to the block payload.
 		u8* m_base = nullptr;
 		size_t m_capacity = 0;
 		size_t m_block_size = 0;

@@ -1,3 +1,4 @@
+#include <ember/core/log.h>
 #include <ember/memory/arena.h>
 #include <ember/memory/memory.h>
 
@@ -22,26 +23,13 @@ namespace ember::memory
 		static_assert(Arena::MAX_THREADS == 64, "the slot mask holds one bit per slot");
 	}
 
-	Arena::~Arena()
+	Arena::Arena(const char* name) : m_name(name)
 	{
-		shutdown();
-	}
-
-	void Arena::initialize(TaggedHeap* blocks, const char* name)
-	{
-		EMBER_ASSERT_MSG(m_tagged_heap == nullptr, "initialize runs once");
-		EMBER_ASSERT(blocks != nullptr);
 		EMBER_ASSERT(name != nullptr);
-
-		m_tagged_heap = blocks;
-		m_name = name;
-		m_tag = NO_BLOCK_TAG;
-		m_active = false;
-
 		internal::register_arena(this);
 	}
 
-	void Arena::shutdown()
+	Arena::~Arena()
 	{
 		if (m_tagged_heap == nullptr)
 		{
@@ -50,20 +38,16 @@ namespace ember::memory
 
 		if (m_tag != NO_BLOCK_TAG)
 		{
-			(void)m_tagged_heap->free(m_tag);
+			static_cast<void>(m_tagged_heap->free(m_tag));
 		}
 
 		internal::unregister_arena(this);
 
 		forget_blocks();
-		m_tagged_heap = nullptr;
-		m_tag = NO_BLOCK_TAG;
-		m_active = false;
 	}
 
-	void Arena::begin(BlockTag tag)
+	void Arena::begin(TaggedHeap& heap, BlockTag tag)
 	{
-		EMBER_ASSERT_MSG(m_tagged_heap != nullptr, "begin before initialize");
 		EMBER_ASSERT_MSG(!m_active, "begin on an arena that was not ended");
 		EMBER_ASSERT(tag != NO_BLOCK_TAG);
 
@@ -75,6 +59,8 @@ namespace ember::memory
 			slot.clear();
 		}
 
+		m_tagged_heap = &heap;
+		m_origin = reinterpret_cast<uintptr_t>(heap.base());
 		m_tag = tag;
 		m_active = true;
 	}
@@ -106,9 +92,11 @@ namespace ember::memory
 				return false;
 			}
 
-			const u32 slot = (u32)std::countr_zero(available);
+			// Acquire pairs with the release in unregister_thread(), so a thread that inherits
+			// a slot sees the previous owner's cursor writes.
+			const u32 slot = static_cast<u32>(std::countr_zero(available));
 			if (s_slots_in_use.compare_exchange_weak(in_use, in_use | (u64{1} << slot),
-			        std::memory_order_relaxed))
+			        std::memory_order_acquire, std::memory_order_relaxed))
 			{
 				t_slot = slot;
 				return true;
@@ -123,7 +111,7 @@ namespace ember::memory
 			return;
 		}
 
-		s_slots_in_use.fetch_and(~(u64{1} << t_slot), std::memory_order_relaxed);
+		s_slots_in_use.fetch_and(~(u64{1} << t_slot), std::memory_order_release);
 		t_slot = NO_SLOT;
 	}
 
@@ -132,37 +120,45 @@ namespace ember::memory
 		return t_slot;
 	}
 
-	void* Arena::refill(Slot& slot, size_t bytes, size_t alignment)
+	size_t Arena::blocks_needed(size_t bytes, size_t alignment) const
 	{
-		EMBER_ASSERT(m_tagged_heap != nullptr);
-
-		// Reserve enough space to satisfy the alignment even at the start of a run.
+		// A run starts on a block boundary, which is already aligned to anything up to the
+		// block size. Larger alignments reserve worst-case padding.
 		const size_t block_size = m_tagged_heap->block_size();
-		const size_t needed = bytes + alignment - 1;
-		const size_t count = (needed + block_size - 1) / block_size;
+		const size_t slack = alignment <= block_size ? 0 : alignment - 1;
+		return (bytes + slack + block_size - 1) / block_size;
+	}
 
+	u8* Arena::refill(Slot& slot, size_t bytes, size_t alignment)
+	{
+		const size_t count = blocks_needed(bytes, alignment);
 		u8* base = count <= m_tagged_heap->block_count()
 		               ? (u8*)m_tagged_heap->allocate((u32)count, m_tag)
 		               : nullptr;
 
 		if (base == nullptr) [[unlikely]]
 		{
-			std::fprintf(stderr,
-			    "[memory] arena '%s': no run of %llu free blocks; %u of %u in use\n", m_name,
-			    (unsigned long long)count, m_tagged_heap->blocks_in_use(),
-			    m_tagged_heap->block_count());
-			out_of_memory(bytes, alignment, m_name);
+			return nullptr;
 		}
 
-		u8* aligned = align_up(base, alignment);
+		u8* aligned = align_offset(base, alignment);
+		EMBER_ASSERT(aligned == base || alignment > m_tagged_heap->block_size());
 
 		// Leave the old run's unused tail for tag reclamation. Each thread can then
 		// keep allocating through a single forward-only cursor.
 		slot.cursor = aligned + bytes;
-		slot.end = base + count * block_size;
+		slot.end = base + count * m_tagged_heap->block_size();
 		slot.refills += 1;
 		slot.blocks += (u32)count;
 		return aligned;
+	}
+
+	void Arena::exhausted(size_t size, size_t alignment) const
+	{
+		EMBER_ERROR("[memory] arena '{}': no run of {} free blocks; {} of {} in use.", m_name,
+		    static_cast<u64>(blocks_needed(size == 0 ? 1 : size, alignment)),
+		    m_tagged_heap->blocks_in_use(), m_tagged_heap->block_count());
+		out_of_memory(size, alignment, m_name);
 	}
 
 	void Arena::forget_blocks()
