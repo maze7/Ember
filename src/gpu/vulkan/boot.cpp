@@ -1387,7 +1387,7 @@ namespace ember::gpu
 				}
 				for (u32 i = 0; i < swapchain_count; ++i)
 				{
-					destroy_swapchain(swapchains[i]);
+					destroy(swapchains[i]);
 				}
 
 				// Release backend-owned resources before reporting caller resources left alive.

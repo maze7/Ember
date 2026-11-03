@@ -4,9 +4,11 @@ namespace ember
 {
 	bool initialize(const EngineDef& def)
 	{
+		// Memory must be initialized first as all other subsystems rely on allocating from it
 		if (!memory::initialize(def.memory))
 			return false;
 
+		// Logging second, so that subsequent subsystems can use it
 		if (!log::initialize(def.log) || !jobs::initialize(def.jobs))
 		{
 			shutdown();

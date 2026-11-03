@@ -620,7 +620,7 @@ namespace ember::gpu
 		// A minimized window keeps its surface and handle; acquire() builds when pixels return.
 		if (build(*b, data, handle) == Build::Failed)
 		{
-			destroy_swapchain(handle);
+			destroy(handle);
 			return {};
 		}
 
@@ -636,7 +636,7 @@ namespace ember::gpu
 #endif
 	}
 
-	void destroy_swapchain(SwapchainHandle swapchain)
+	void destroy(SwapchainHandle swapchain)
 	{
 		vk::Backend* b = vk::backend();
 		if (b == nullptr)

@@ -1,18 +1,8 @@
 #pragma once
 
-// Owns the device, fixed resource pools, bindless descriptors, queue timelines,
-// and storage for frames in flight. Jobs may create resources, record and submit.
-// Pool mutations are serialized; lock-free lookups do not keep resources alive.
-// Callers order resource use and finish frame users before closing the frame.
-//
-// Each command list has one writer and a private pool, allowing fiber migration.
-// The frame loop's fiber alone begins, ends and completes frames. Driver waits
-// park scheduler fibers through I/O tasks when available; external callers and
-// failed I/O submissions run the blocking call directly.
-//
-// Frame memory never reaches the GPU. Per-frame data goes through the device's
-// rings, recycled with the frame slot, so the frame module retires a frame once
-// its CPU stages end and the device stamps Stage::Gpu by frame number afterwards.
+// The GPU module is the foundational abstraction layer above the GPU API selected at compile time
+// (Vulkan, DX12, etc.). It provides the GPU device, resource pools, bindless descriptors, and
+// command lists.
 
 #include <ember/containers/span.h>
 #include <ember/core/frame.h>
@@ -417,7 +407,7 @@ namespace ember::gpu
 	// then. Acquisition handles surface changes and can recreate the images.
 	// Creation failure logs and returns a null handle.
 	[[nodiscard]] SwapchainHandle create_swapchain(const SwapchainDef& def);
-	void destroy_swapchain(SwapchainHandle swapchain);
+	void destroy(SwapchainHandle swapchain);
 	bool is_valid(SwapchainHandle swapchain);
 
 	TextureFormat swapchain_format(SwapchainHandle swapchain);
