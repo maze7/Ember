@@ -55,17 +55,17 @@ namespace ember::platform
 		// SDL's allocator, so its windows, events and pad state live in the heap under Platform.
 		void* SDLCALL sdl_malloc(size_t size)
 		{
-			return memory::allocate(memory::Tag::Platform, size);
+			return memory::allocate(MemoryTag::Platform, size);
 		}
 
 		void* SDLCALL sdl_calloc(size_t count, size_t size)
 		{
-			return memory::allocate_zeroed(memory::Tag::Platform, count * size);
+			return memory::allocate_zeroed(MemoryTag::Platform, count * size);
 		}
 
 		void* SDLCALL sdl_realloc(void* ptr, size_t size)
 		{
-			return memory::reallocate(memory::Tag::Platform, ptr, size);
+			return memory::reallocate(MemoryTag::Platform, ptr, size);
 		}
 
 		void SDLCALL sdl_free(void* ptr)
@@ -485,7 +485,7 @@ namespace ember::platform
 			return false;
 		}
 
-		s_platform.windows.initialize(memory::heap(), memory::Tag::Platform,
+		s_platform.windows.initialize(memory::heap(), MemoryTag::Platform,
 		    def.max_windows > 0 ? def.max_windows : 1);
 		s_platform.pending = InputState{};
 		s_platform.gamepads_discovered = false;

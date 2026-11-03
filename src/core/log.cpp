@@ -226,7 +226,7 @@ namespace ember::log
 			return false;
 		}
 
-		s_ring.initialize(memory::heap(), memory::Tag::Engine, def.ring_capacity);
+		s_ring.initialize(memory::heap(), MemoryTag::Engine, def.ring_capacity);
 		s_color = def.color;
 		s_dropped.store(0, std::memory_order_relaxed);
 		s_reported_dropped = 0;

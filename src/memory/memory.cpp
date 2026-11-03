@@ -10,7 +10,7 @@ namespace ember::memory
 {
 	namespace
 	{
-		constinit BlockHeap s_blocks;
+		constinit TaggedHeap s_blocks;
 		constinit std::atomic<bool> s_initialized{false};
 
 		// Keep the original range for release(). Each allocator remembers the
@@ -40,7 +40,7 @@ namespace ember::memory
 		const size_t page = virtual_memory::page_size();
 		const size_t heap = align_up((size_t)def.heap_capacity, page);
 		const size_t blocks =
-		    BlockHeap::region_size((size_t)def.block_capacity, (size_t)def.block_size);
+		    TaggedHeap::region_size((size_t)def.block_capacity, (size_t)def.block_size);
 		const size_t stacks = align_up((size_t)def.stack_capacity, page);
 		const size_t development = align_up((size_t)def.development_capacity, page);
 
@@ -165,7 +165,7 @@ namespace ember::memory
 		Arena::unregister_thread();
 	}
 
-	BlockHeap* block_heap()
+	TaggedHeap* block_heap()
 	{
 		EMBER_ASSERT_MSG(s_initialized.load(std::memory_order_acquire),
 		    "the block allocator is valid between initialize and shutdown");

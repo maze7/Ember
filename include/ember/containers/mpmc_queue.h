@@ -38,7 +38,7 @@ namespace ember
 
 		// capacity must be a power of two, above zero. Initialize before starting producers
 		// or consumers, and keep the allocator alive through shutdown.
-		void initialize(memory::Allocator* allocator, memory::Tag tag, size_t capacity)
+		void initialize(memory::Allocator* allocator, MemoryTag tag, size_t capacity)
 		{
 			EMBER_ASSERT_MSG(m_cells == nullptr, "initialize runs once");
 			EMBER_ASSERT(allocator != nullptr);

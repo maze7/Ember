@@ -89,11 +89,11 @@ namespace ember::frames
 
 		memory::Allocator* heap = memory::heap();
 		s_frames.def = def;
-		s_frames.history.initialize(heap, memory::Tag::Engine, def.history);
+		s_frames.history.initialize(heap, MemoryTag::Engine, def.history);
 
 		for (u32 i = 0; i < def.in_flight; ++i)
 		{
-			s_frames.arenas[i] = memory::new_object<memory::Arena>(heap, memory::Tag::Engine);
+			s_frames.arenas[i] = memory::new_object<memory::Arena>(heap, MemoryTag::Engine);
 			s_frames.arenas[i]->initialize(memory::block_heap(), "frame");
 		}
 

@@ -23,7 +23,7 @@ namespace ember::jobs
 	{
 		EMBER_ASSERT_MSG(s_scheduler == nullptr, "one job system per process");
 
-		Scheduler* scheduler = memory::new_object<Scheduler>(memory::heap(), memory::Tag::Engine);
+		Scheduler* scheduler = memory::new_object<Scheduler>(memory::heap(), MemoryTag::Engine);
 		if (!scheduler->initialize(def))
 		{
 			scheduler->shutdown();

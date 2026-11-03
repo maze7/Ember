@@ -145,7 +145,7 @@ namespace ember::fs
 	// Reads the file through allocator under tag, subject to def's size limit.
 	// No text terminator is appended. The allocator must outlive the returned buffer.
 	Result<FileData, FileError> read_file(StringView path, memory::Allocator* allocator,
-	    memory::Tag tag = memory::Tag::Unknown, const ReadFileDef& def = {});
+	    MemoryTag tag = MemoryTag::Unknown, const ReadFileDef& def = {});
 
 	// Returns storage to its allocator and clears the record. Empty records are harmless;
 	// arena-backed bytes may instead be reclaimed with the arena's lifetime.
@@ -296,7 +296,7 @@ namespace ember::fs
 	{
 		StringView path;                        // Keep the path storage alive until completion.
 		memory::Allocator* allocator = nullptr; // Required; outlives the task and returned storage.
-		memory::Tag tag = memory::Tag::Unknown;
+		MemoryTag tag = MemoryTag::Unknown;
 		ReadFileDef def = {};
 
 		Result<FileData, FileError> result = {}; // Caller owns the returned buffer.

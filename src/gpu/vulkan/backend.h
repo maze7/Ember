@@ -471,7 +471,7 @@ namespace ember::gpu::vk
 		u64 peak_staging_used = 0;
 
 		// Protected by resources_lock. The prefix before graveyard_head has already been released.
-		Vector<Dead> graveyard{memory::Tag::Graphics};
+		Vector<Dead> graveyard{MemoryTag::Graphics};
 		u32 graveyard_head = 0;
 
 		// Query pairs are divided by slot and list. Null if timestamps are unsupported or

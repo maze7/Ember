@@ -41,7 +41,7 @@ namespace ember::gpu
 		void* VKAPI_PTR allocate_callback(void*, size_t size, size_t alignment,
 		    VkSystemAllocationScope)
 		{
-			return memory::allocate(memory::Tag::Graphics, size, max(alignment, DEFAULT_ALIGNMENT));
+			return memory::allocate(MemoryTag::Graphics, size, max(alignment, DEFAULT_ALIGNMENT));
 		}
 
 		void* VKAPI_PTR reallocate_callback(void*, void* original, size_t size, size_t alignment,
@@ -105,7 +105,7 @@ namespace ember::gpu
 		template <typename T, typename F>
 		Vector<T> enumerate(F fetch)
 		{
-			Vector<T> out{memory::Tag::Graphics};
+			Vector<T> out{MemoryTag::Graphics};
 			u32 count = 0;
 
 			if (fetch(&count, nullptr) != VK_SUCCESS || count == 0)
@@ -1067,8 +1067,8 @@ namespace ember::gpu
 			const u32 total = b.ctx.list_total;
 			const u32 zone_capacity = (total + 1) * vk::MAX_ZONES;
 
-			b.slots = (vk::Slot*)memory::allocate(memory::Tag::Graphics,
-			    sizeof(vk::Slot) * in_flight, alignof(vk::Slot));
+			b.slots = (vk::Slot*)memory::allocate(MemoryTag::Graphics, sizeof(vk::Slot) * in_flight,
+			    alignof(vk::Slot));
 
 			for (u32 s = 0; s < in_flight; ++s)
 			{
@@ -1083,7 +1083,7 @@ namespace ember::gpu
 						continue;
 					}
 
-					slot.lists[q] = (CommandListState*)memory::allocate(memory::Tag::Graphics,
+					slot.lists[q] = (CommandListState*)memory::allocate(MemoryTag::Graphics,
 					    sizeof(CommandListState) * capacity, alignof(CommandListState));
 					for (u32 i = 0; i < capacity; ++i)
 					{
@@ -1094,7 +1094,7 @@ namespace ember::gpu
 				}
 
 				slot.finish = CommandListState{.queue = Queue::Graphics, .slot = s, .index = total};
-				slot.zones = (ZoneTiming*)memory::allocate_zeroed(memory::Tag::Graphics,
+				slot.zones = (ZoneTiming*)memory::allocate_zeroed(MemoryTag::Graphics,
 				    sizeof(ZoneTiming) * zone_capacity, alignof(ZoneTiming));
 			}
 
@@ -1301,26 +1301,25 @@ namespace ember::gpu
 			ctx.max_swapchains = limits.max_swapchains;
 
 			memory::Allocator* heap = memory::heap();
-			b.textures.initialize(heap, memory::Tag::Graphics, limits.max_textures);
-			b.texture_cold = (TextureCold*)memory::allocate(memory::Tag::Graphics,
+			b.textures.initialize(heap, MemoryTag::Graphics, limits.max_textures);
+			b.texture_cold = (TextureCold*)memory::allocate(MemoryTag::Graphics,
 			    sizeof(TextureCold) * limits.max_textures, alignof(TextureCold));
 			for (u32 i = 0; i < limits.max_textures; ++i)
 			{
 				::new ((void*)(b.texture_cold + i)) TextureCold();
 			}
-			b.buffers.initialize(heap, memory::Tag::Graphics, limits.max_buffers);
-			b.buffer_cold = (BufferCold*)memory::allocate(memory::Tag::Graphics,
+			b.buffers.initialize(heap, MemoryTag::Graphics, limits.max_buffers);
+			b.buffer_cold = (BufferCold*)memory::allocate(MemoryTag::Graphics,
 			    sizeof(BufferCold) * limits.max_buffers, alignof(BufferCold));
 			for (u32 i = 0; i < limits.max_buffers; ++i)
 			{
 				::new ((void*)(b.buffer_cold + i)) BufferCold();
 			}
-			b.samplers.initialize(heap, memory::Tag::Graphics, limits.max_samplers);
-			b.graphics_pipelines.initialize(heap, memory::Tag::Graphics,
+			b.samplers.initialize(heap, MemoryTag::Graphics, limits.max_samplers);
+			b.graphics_pipelines.initialize(heap, MemoryTag::Graphics,
 			    limits.max_graphics_pipelines);
-			b.compute_pipelines.initialize(heap, memory::Tag::Graphics,
-			    limits.max_compute_pipelines);
-			b.swapchains.initialize(heap, memory::Tag::Graphics, limits.max_swapchains);
+			b.compute_pipelines.initialize(heap, MemoryTag::Graphics, limits.max_compute_pipelines);
+			b.swapchains.initialize(heap, MemoryTag::Graphics, limits.max_swapchains);
 
 			if (!create_instance(b, def))
 			{
@@ -1518,7 +1517,7 @@ namespace ember::gpu
 		s_validation_errors.store(0, std::memory_order_relaxed);
 		s_validation_warnings.store(0, std::memory_order_relaxed);
 
-		s_backend = memory::new_object<vk::Backend>(memory::heap(), memory::Tag::Graphics);
+		s_backend = memory::new_object<vk::Backend>(memory::heap(), MemoryTag::Graphics);
 		s_backend->def = def;
 
 		if (!vk::boot(*s_backend, def))

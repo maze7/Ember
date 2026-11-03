@@ -19,7 +19,7 @@ namespace ember::jobs
 
 		for (MpmcQueue<Job>& queue : queues)
 		{
-			queue.initialize(memory::heap(), memory::Tag::Engine,
+			queue.initialize(memory::heap(), MemoryTag::Engine,
 			    std::bit_ceil(queue_capacity < 2 ? 2u : queue_capacity));
 		}
 
@@ -29,7 +29,7 @@ namespace ember::jobs
 			return;
 		}
 
-		threads = (std::thread*)memory::allocate(memory::Tag::Engine, count * sizeof(std::thread),
+		threads = (std::thread*)memory::allocate(MemoryTag::Engine, count * sizeof(std::thread),
 		    alignof(std::thread));
 		for (u32 index = 0; index < count; ++index)
 		{

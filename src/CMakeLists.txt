@@ -17,7 +17,7 @@ ember_add_module(core
 		core/fiber_x86_64_sysv.S
 		memory/tlsf.c
 		memory/arena.cpp
-		memory/block_heap.cpp
+        memory/tagged_heap.cpp
 		memory/heap.cpp
 		memory/memory.cpp
 		memory/tracker.cpp

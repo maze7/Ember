@@ -147,8 +147,8 @@ namespace ember::gpu
 			const VkImageCreateInfo image_info{
 			    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 			    .flags = def.type == TextureType::TextureCube
-				             ? (VkImageCreateFlags)VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT
-				             : (VkImageCreateFlags)0,
+			                 ? (VkImageCreateFlags)VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT
+			                 : (VkImageCreateFlags)0,
 			    .imageType =
 			        def.type == TextureType::Texture3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D,
 			    .format = format,
@@ -221,7 +221,7 @@ namespace ember::gpu
 			if (target && (def.mip_count > 1 || def.layers > 1))
 			{
 				const u32 count = def.mip_count * def.layers;
-				out.attachment_views = (VkImageView*)memory::allocate_zeroed(memory::Tag::Graphics,
+				out.attachment_views = (VkImageView*)memory::allocate_zeroed(MemoryTag::Graphics,
 				    count * sizeof(VkImageView), alignof(VkImageView));
 				out.attachment_view_count = count;
 

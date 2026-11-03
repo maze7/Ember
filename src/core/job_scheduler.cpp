@@ -240,9 +240,9 @@ namespace ember::jobs
 			return false;
 		}
 
-		records = (FiberRecord*)memory::allocate(memory::Tag::Engine, count * sizeof(FiberRecord),
+		records = (FiberRecord*)memory::allocate(MemoryTag::Engine, count * sizeof(FiberRecord),
 		    alignof(FiberRecord));
-		free_list.initialize(memory::heap(), memory::Tag::Engine, queue_capacity(count));
+		free_list.initialize(memory::heap(), MemoryTag::Engine, queue_capacity(count));
 
 		for (u32 index = 0; index < count; ++index)
 		{
@@ -343,14 +343,13 @@ namespace ember::jobs
 			return false;
 		}
 
-		ready.initialize(memory::heap(), memory::Tag::Engine, queue_capacity(fibers.count));
+		ready.initialize(memory::heap(), MemoryTag::Engine, queue_capacity(fibers.count));
 		for (MpmcQueue<Job>& queue : jobs)
 		{
-			queue.initialize(memory::heap(), memory::Tag::Engine,
-			    queue_capacity(def.queue_capacity));
+			queue.initialize(memory::heap(), MemoryTag::Engine, queue_capacity(def.queue_capacity));
 		}
 
-		workers = (Worker*)memory::allocate(memory::Tag::Engine, worker_count * sizeof(Worker),
+		workers = (Worker*)memory::allocate(MemoryTag::Engine, worker_count * sizeof(Worker),
 		    alignof(Worker));
 		for (u32 index = 0; index < worker_count; ++index)
 		{

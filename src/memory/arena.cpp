@@ -27,13 +27,13 @@ namespace ember::memory
 		shutdown();
 	}
 
-	void Arena::initialize(BlockHeap* blocks, const char* name)
+	void Arena::initialize(TaggedHeap* blocks, const char* name)
 	{
-		EMBER_ASSERT_MSG(m_blocks == nullptr, "initialize runs once");
+		EMBER_ASSERT_MSG(m_tagged_heap == nullptr, "initialize runs once");
 		EMBER_ASSERT(blocks != nullptr);
 		EMBER_ASSERT(name != nullptr);
 
-		m_blocks = blocks;
+		m_tagged_heap = blocks;
 		m_name = name;
 		m_tag = NO_BLOCK_TAG;
 		m_active = false;
@@ -43,27 +43,27 @@ namespace ember::memory
 
 	void Arena::shutdown()
 	{
-		if (m_blocks == nullptr)
+		if (m_tagged_heap == nullptr)
 		{
 			return;
 		}
 
 		if (m_tag != NO_BLOCK_TAG)
 		{
-			(void)m_blocks->free(m_tag);
+			(void)m_tagged_heap->free(m_tag);
 		}
 
 		internal::unregister_arena(this);
 
 		forget_blocks();
-		m_blocks = nullptr;
+		m_tagged_heap = nullptr;
 		m_tag = NO_BLOCK_TAG;
 		m_active = false;
 	}
 
 	void Arena::begin(BlockTag tag)
 	{
-		EMBER_ASSERT_MSG(m_blocks != nullptr, "begin before initialize");
+		EMBER_ASSERT_MSG(m_tagged_heap != nullptr, "begin before initialize");
 		EMBER_ASSERT_MSG(!m_active, "begin on an arena that was not ended");
 		EMBER_ASSERT(tag != NO_BLOCK_TAG);
 
@@ -134,21 +134,23 @@ namespace ember::memory
 
 	void* Arena::refill(Slot& slot, size_t bytes, size_t alignment)
 	{
-		EMBER_ASSERT(m_blocks != nullptr);
+		EMBER_ASSERT(m_tagged_heap != nullptr);
 
 		// Reserve enough space to satisfy the alignment even at the start of a run.
-		const size_t block_size = m_blocks->block_size();
+		const size_t block_size = m_tagged_heap->block_size();
 		const size_t needed = bytes + alignment - 1;
 		const size_t count = (needed + block_size - 1) / block_size;
 
-		u8* base =
-		    count <= m_blocks->block_count() ? (u8*)m_blocks->allocate((u32)count, m_tag) : nullptr;
+		u8* base = count <= m_tagged_heap->block_count()
+		               ? (u8*)m_tagged_heap->allocate((u32)count, m_tag)
+		               : nullptr;
 
 		if (base == nullptr) [[unlikely]]
 		{
 			std::fprintf(stderr,
 			    "[memory] arena '%s': no run of %llu free blocks; %u of %u in use\n", m_name,
-			    (unsigned long long)count, m_blocks->blocks_in_use(), m_blocks->block_count());
+			    (unsigned long long)count, m_tagged_heap->blocks_in_use(),
+			    m_tagged_heap->block_count());
 			out_of_memory(bytes, alignment, m_name);
 		}
 
@@ -189,11 +191,12 @@ namespace ember::memory
 			stats.threads += 1;
 		}
 
-		stats.bytes_owned = m_blocks != nullptr ? stats.blocks * m_blocks->block_size() : 0;
+		stats.bytes_owned =
+		    m_tagged_heap != nullptr ? stats.blocks * m_tagged_heap->block_size() : 0;
 		return stats;
 	}
 
-	u64 Arena::tag_bytes(Tag tag) const
+	u64 Arena::tag_bytes(MemoryTag tag) const
 	{
 #if EMBER_MEMORY_TRACKING >= 1
 		u64 bytes = 0;

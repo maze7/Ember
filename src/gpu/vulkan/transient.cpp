@@ -29,13 +29,13 @@ namespace ember::gpu
 		void init_slices(vk::Backend& b, vk::Ring& ring)
 		{
 			ring.worker_count = jobs::worker_count();
-			ring.slices = (vk::RingSlice*)memory::allocate(memory::Tag::Graphics,
+			ring.slices = (vk::RingSlice*)memory::allocate(MemoryTag::Graphics,
 			    sizeof(vk::RingSlice) * b.ctx.in_flight, alignof(vk::RingSlice));
 
 			for (u32 slot = 0; slot < b.ctx.in_flight; ++slot)
 			{
 				vk::RingSlice& slice = *::new ((void*)(ring.slices + slot)) vk::RingSlice();
-				slice.cursors = (vk::RingCursor*)memory::allocate_zeroed(memory::Tag::Graphics,
+				slice.cursors = (vk::RingCursor*)memory::allocate_zeroed(MemoryTag::Graphics,
 				    sizeof(vk::RingCursor) * ring.worker_count, alignof(vk::RingCursor));
 				vk::ring_reset(ring, slot);
 			}

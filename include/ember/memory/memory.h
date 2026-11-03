@@ -15,18 +15,15 @@
 #include <ember/core/types.h>
 #include <ember/memory/allocator.h>
 #include <ember/memory/arena.h>
-#include <ember/memory/block_heap.h>
 #include <ember/memory/heap.h>
 #include <ember/memory/new.h>
 #include <ember/memory/tag.h>
+#include <ember/memory/tagged_heap.h>
 
 #include <cstddef>
 
 namespace ember::memory
 {
-	EMBER_ENUM_NAMES(Tag, "Unknown", "Engine", "Graphics", "Audio", "Physics", "Gameplay", "Assets",
-	    "Scripting", "Network", "Platform", "Input", "Tools");
-
 	struct MemoryDef
 	{
 		// Capacity of the retail heap. Requests that cannot fit try development
@@ -91,7 +88,7 @@ namespace ember::memory
 	void shutdown_thread();
 
 	// The shared block heap used by arenas between initialize() and shutdown().
-	BlockHeap* block_heap();
+	TaggedHeap* block_heap();
 
 	// Returns a page-aligned, committed range, or null if the partition is full.
 	// Size rounds up to whole pages. The caller decommits each stack's guard page.
@@ -107,7 +104,7 @@ namespace ember::memory
 
 	// Heap usage thresholds in Tag order. Tracking builds warn once when a tag
 	// reaches its budget; the warning does not reject the allocation.
-	inline constexpr u64 TAG_BUDGETS[TAG_COUNT] = {
+	inline constexpr u64 TAG_BUDGETS[MEMORY_TAG_COUNT] = {
 	    256_mb, // Unknown
 	    64_mb,  // Engine
 	    512_mb, // Graphics
@@ -138,7 +135,7 @@ namespace ember::memory
 	// Reads one tag's counters, or the totals across all tags and registered arenas.
 	// Concurrent allocations may change individual counters during the read.
 	// Returns zeros at tracking level 0.
-	TagStats stats(Tag tag);
+	TagStats stats(MemoryTag tag);
 	TagStats total();
 
 	// Prints heap and arena usage by tag, followed by the partition totals.
@@ -158,4 +155,10 @@ namespace ember::memory
 	// Reports the failed request and stops the process. Heap and arena
 	// allocation use this when they cannot provide the requested storage.
 	[[noreturn]] void out_of_memory(size_t size, size_t alignment, const char* owner);
+}
+
+namespace ember
+{
+	EMBER_ENUM_NAMES(MemoryTag, "Unknown", "Engine", "Graphics", "Audio", "Physics", "Gameplay",
+	    "Assets", "Scripting", "Network", "Platform", "Input", "Tools");
 }

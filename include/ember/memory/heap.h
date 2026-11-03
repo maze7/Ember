@@ -34,15 +34,15 @@ namespace ember::memory
 	// Failure calls out_of_memory() instead of returning null. A zero-size request
 	// still gets its own block. where defaults to the caller's source location.
 	// allocate_zeroed() also clears the payload.
-	void* allocate(Tag tag, size_t size, size_t alignment = DEFAULT_ALIGNMENT,
+	void* allocate(MemoryTag tag, size_t size, size_t alignment = DEFAULT_ALIGNMENT,
 	    std::source_location where = std::source_location::current());
-	void* allocate_zeroed(Tag tag, size_t size, size_t alignment = DEFAULT_ALIGNMENT,
+	void* allocate_zeroed(MemoryTag tag, size_t size, size_t alignment = DEFAULT_ALIGNMENT,
 	    std::source_location where = std::source_location::current());
 
 	// Resizes a block using DEFAULT_ALIGNMENT. Allocates a new block, copies the
 	// bytes that fit, then frees the old one. A null ptr allocates under tag;
 	// an existing block keeps its tag. Zero still allocates a block.
-	void* reallocate(Tag tag, void* ptr, size_t size,
+	void* reallocate(MemoryTag tag, void* ptr, size_t size,
 	    std::source_location where = std::source_location::current());
 
 	// Frees a heap allocation. Null is harmless; the header supplies its tag and size.

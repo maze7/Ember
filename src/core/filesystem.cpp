@@ -273,7 +273,7 @@ namespace ember::fs
 	}
 
 	Result<FileData, FileError> read_file(StringView path, memory::Allocator* allocator,
-	    memory::Tag tag, const ReadFileDef& def)
+	    MemoryTag tag, const ReadFileDef& def)
 	{
 		EMBER_ASSERT(allocator != nullptr);
 		EMBER_ASSERT(std::has_single_bit(def.alignment));
@@ -657,7 +657,7 @@ namespace ember::fs
 			    WriteFile& request = *(WriteFile*)data;
 			    request.result =
 			        request.atomic ? write_file_atomic(request.path, request.bytes, request.durable)
-					               : write_file(request.path, request.bytes);
+			                       : write_file(request.path, request.bytes);
 		    },
 		    .data = &request,
 		    .name = "write file",

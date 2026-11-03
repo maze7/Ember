@@ -25,9 +25,9 @@ namespace ember::memory
 			std::atomic<u64> total_count{0};
 		};
 
-		constinit Counters s_counters[TAG_COUNT];
+		constinit Counters s_counters[MEMORY_TAG_COUNT];
 		constinit Counters s_total;
-		constinit std::atomic<bool> s_budget_warned[TAG_COUNT];
+		constinit std::atomic<bool> s_budget_warned[MEMORY_TAG_COUNT];
 
 		TagStats read(const Counters& counters)
 		{
@@ -84,7 +84,7 @@ namespace ember::memory
 		constinit const Arena* s_arenas[MAX_ARENAS];
 		constinit u32 s_arena_count = 0;
 
-		u64 arena_bytes(Tag tag)
+		u64 arena_bytes(MemoryTag tag)
 		{
 			u64 bytes = 0;
 
@@ -105,9 +105,9 @@ namespace ember::memory
 			s_arena_lock.lock();
 			for (u32 index = 0; index < s_arena_count; ++index)
 			{
-				for (size_t tag = 0; tag < TAG_COUNT; ++tag)
+				for (size_t tag = 0; tag < MEMORY_TAG_COUNT; ++tag)
 				{
-					bytes += s_arenas[index]->tag_bytes((Tag)tag);
+					bytes += s_arenas[index]->tag_bytes((MemoryTag)tag);
 				}
 			}
 			s_arena_lock.unlock();
@@ -132,7 +132,7 @@ namespace ember::memory
 #endif
 	}
 
-	TagStats stats(Tag tag)
+	TagStats stats(MemoryTag tag)
 	{
 #if EMBER_MEMORY_TRACKING >= 1
 		TagStats stats = read(s_counters[(size_t)tag]);
@@ -161,9 +161,9 @@ namespace ember::memory
 		std::fprintf(stderr, "%-10s %14s %14s %10s %12s %14s %14s\n", "Tag", "Heap", "Peak", "Live",
 		    "Total", "Arena", "Budget");
 
-		for (size_t index = 0; index < TAG_COUNT; ++index)
+		for (size_t index = 0; index < MEMORY_TAG_COUNT; ++index)
 		{
-			print_row(enum_name((Tag)index), stats((Tag)index), TAG_BUDGETS[index]);
+			print_row(enum_name((MemoryTag)index), stats((MemoryTag)index), TAG_BUDGETS[index]);
 		}
 
 		print_row("Total", total(), 0);
@@ -200,14 +200,15 @@ namespace ember::memory
 			if (debug->file != nullptr && debug->file[0] != '\0')
 			{
 				std::fprintf(stderr, "[memory] leak: %s, %llu bytes, allocation %u, %s:%u\n",
-				    enum_name((Tag)header->tag), (unsigned long long)header->size, debug->number,
-				    debug->file, debug->line);
+				    enum_name((MemoryTag)header->tag), (unsigned long long)header->size,
+				    debug->number, debug->file, debug->line);
 			}
 			else
 			{
 				std::fprintf(stderr,
 				    "[memory] leak: %s, %llu bytes, allocation %u, no source line\n",
-				    enum_name((Tag)header->tag), (unsigned long long)header->size, debug->number);
+				    enum_name((MemoryTag)header->tag), (unsigned long long)header->size,
+				    debug->number);
 			}
 
 			++leaked;
@@ -245,7 +246,7 @@ namespace ember::memory
 #if EMBER_MEMORY_TRACKING >= 1
 	void internal::track_allocate(Header* header)
 	{
-		const Tag tag = (Tag)header->tag;
+		const MemoryTag tag = (MemoryTag)header->tag;
 		const size_t index = (size_t)tag;
 		const u64 size = header->size;
 		void* payload = (u8*)header + sizeof(Header);
@@ -289,7 +290,7 @@ namespace ember::memory
 
 	void internal::track_free(Header* header)
 	{
-		const Tag tag = (Tag)header->tag;
+		const MemoryTag tag = (MemoryTag)header->tag;
 		void* payload = (u8*)header + sizeof(Header);
 
 		EMBER_PROFILE_FREE(payload, enum_name(tag));

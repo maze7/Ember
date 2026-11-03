@@ -19,7 +19,7 @@ namespace ember::memory
 	// Detailed leak reports identify these allocations by tag and allocation
 	// number; this helper passes no source location.
 	template <typename T, typename... Args>
-	[[nodiscard]] T* new_object(Allocator* allocator, Tag tag, Args&&... args) noexcept
+	[[nodiscard]] T* new_object(Allocator* allocator, MemoryTag tag, Args&&... args) noexcept
 	{
 		void* memory = allocator->allocate(tag, sizeof(T), alignof(T), std::source_location{});
 		return ::new (memory) T(std::forward<Args>(args)...);

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.3.0)
+cmake_minimum_required(VERSION 4.0.2)
 project(Ember VERSION 0.1.0 LANGUAGES C CXX ASM)
 
 set(CMAKE_CXX_EXTENSIONS OFF)

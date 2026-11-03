@@ -28,7 +28,7 @@ namespace ember::memory
 		//
 		// Zero-size requests still get distinct live addresses. Containers pass an
 		// empty source location; direct memory::allocate calls capture the caller.
-		virtual void* allocate(memory::Tag tag, size_t size, size_t alignment,
+		virtual void* allocate(MemoryTag tag, size_t size, size_t alignment,
 		    std::source_location where) = 0;
 
 		// Use the allocator, size, and alignment of the original request. Arena
@@ -68,17 +68,18 @@ namespace ember::memory
 		using is_always_equal = std::false_type;
 
 		Allocator* allocator = nullptr;
-		Tag tag = Tag::Unknown;
+		MemoryTag tag = MemoryTag::Unknown;
 
 		TagAllocator() : allocator(heap())
 		{
 		}
 
-		TagAllocator(Tag tag) : allocator(heap()), tag(tag)
+		TagAllocator(MemoryTag tag) : allocator(heap()), tag(tag)
 		{
 		}
 
-		TagAllocator(Allocator* allocator, Tag tag = Tag::Unknown) : allocator(allocator), tag(tag)
+		TagAllocator(Allocator* allocator, MemoryTag tag = MemoryTag::Unknown)
+		    : allocator(allocator), tag(tag)
 		{
 		}
 

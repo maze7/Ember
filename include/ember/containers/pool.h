@@ -93,7 +93,7 @@ namespace ember
 
 		// Allocates fixed storage without constructing values. capacity is in [1, MAX_CAPACITY];
 		// keep allocator alive through shutdown.
-		void initialize(memory::Allocator* allocator, memory::Tag tag, u32 capacity)
+		void initialize(memory::Allocator* allocator, MemoryTag tag, u32 capacity)
 		{
 			EMBER_ASSERT_MSG(m_values == nullptr, "initialize runs once");
 			EMBER_ASSERT(allocator != nullptr);

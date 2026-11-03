@@ -71,7 +71,7 @@ namespace ember
 		RingBuffer& operator=(const RingBuffer&) = delete;
 
 		// Builds capacity slots, at least one. Keep the allocator alive through shutdown.
-		void initialize(memory::Allocator* allocator, memory::Tag tag, u32 capacity)
+		void initialize(memory::Allocator* allocator, MemoryTag tag, u32 capacity)
 		{
 			EMBER_ASSERT_MSG(m_slots == nullptr, "initialize runs once");
 			EMBER_ASSERT(allocator != nullptr);

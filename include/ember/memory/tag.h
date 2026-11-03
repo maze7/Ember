@@ -8,9 +8,9 @@
 
 #include <cstddef>
 
-namespace ember::memory
+namespace ember
 {
-	enum class Tag : u8
+	enum class MemoryTag : u8
 	{
 		Unknown = 0,
 		Engine,
@@ -32,5 +32,5 @@ namespace ember::memory
 		Count
 	};
 
-	inline constexpr size_t TAG_COUNT = (size_t)Tag::Count;
+	inline constexpr size_t MEMORY_TAG_COUNT = (size_t)MemoryTag::Count;
 }

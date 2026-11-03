@@ -194,7 +194,7 @@ namespace ember::memory
 		}
 	}
 
-	void* allocate(Tag tag, size_t size, size_t alignment, std::source_location where)
+	void* allocate(MemoryTag tag, size_t size, size_t alignment, std::source_location where)
 	{
 		EMBER_ASSERT(std::has_single_bit(alignment));
 
@@ -214,7 +214,7 @@ namespace ember::memory
 		// oversized scene can still be inspected. Warn on the first fallback attempt
 		// to make the retail shortfall visible.
 		const bool has_development = s_development.base != nullptr;
-		Region* region = tag == Tag::Tools && has_development ? &s_development : &s_retail;
+		Region* region = tag == MemoryTag::Tools && has_development ? &s_development : &s_retail;
 		u8* raw = (u8*)take(*region, bytes);
 		if (raw == nullptr && region == &s_retail && has_development) [[unlikely]]
 		{
@@ -262,14 +262,14 @@ namespace ember::memory
 		return payload;
 	}
 
-	void* allocate_zeroed(Tag tag, size_t size, size_t alignment, std::source_location where)
+	void* allocate_zeroed(MemoryTag tag, size_t size, size_t alignment, std::source_location where)
 	{
 		void* ptr = allocate(tag, size, alignment, where);
 		std::memset(ptr, 0, size);
 		return ptr;
 	}
 
-	void* reallocate(Tag tag, void* ptr, size_t size, std::source_location where)
+	void* reallocate(MemoryTag tag, void* ptr, size_t size, std::source_location where)
 	{
 		// Existing blocks keep their tag. A new block uses the normal alignment.
 		if (ptr == nullptr)
@@ -281,7 +281,7 @@ namespace ember::memory
 		EMBER_ASSERT_MSG(header->magic == internal::HEADER_MAGIC,
 		    "reallocate of a pointer the heap did not hand out");
 
-		void* moved = allocate((Tag)header->tag, size, DEFAULT_ALIGNMENT, where);
+		void* moved = allocate(static_cast<MemoryTag>(header->tag), size, DEFAULT_ALIGNMENT, where);
 		std::memcpy(moved, ptr, header->size < size ? header->size : size);
 		free(ptr);
 		return moved;
@@ -371,7 +371,7 @@ namespace ember::memory
 		public:
 			constexpr HeapAllocator() = default;
 
-			void* allocate(Tag tag, size_t size, size_t alignment,
+			void* allocate(MemoryTag tag, size_t size, size_t alignment,
 			    std::source_location where) override
 			{
 				return memory::allocate(tag, size, alignment, where);

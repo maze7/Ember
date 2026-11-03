@@ -34,12 +34,17 @@ namespace ember::memory
 		Level,
 
 		// Until the last reader of a frame has finished.
-		Frame,
+		Frame, // TODO(Cal): remove this after refactoring to TaggedHeap
+
+		//
+		Update,
+		Render,
+		Gpu,
 
 		Count
 	};
 
-	EMBER_ENUM_NAMES(Lifetime, "None", "Permanent", "Level", "Frame");
+	EMBER_ENUM_NAMES(Lifetime, "None", "Permanent", "Level", "Frame", "Update", "Render", "Gpu");
 
 	// Identifies a group of blocks to reclaim together. The upper eight bits hold
 	// the lifetime and the remaining 56 hold its sequence. memory::Tag instead
@@ -48,7 +53,7 @@ namespace ember::memory
 
 	inline constexpr BlockTag NO_BLOCK_TAG = 0;
 	inline constexpr u32 BLOCK_TAG_SEQUENCE_BITS = 56;
-	inline constexpr u64 BLOCK_TAG_SEQUENCE_MASK = (u64(1) << BLOCK_TAG_SEQUENCE_BITS) - 1;
+	inline constexpr u64 BLOCK_TAG_SEQUENCE_MASK = (u64{1} << BLOCK_TAG_SEQUENCE_BITS) - 1;
 
 	// None is reserved for the empty tag, and the sequence must fit in 56 bits.
 	constexpr BlockTag block_tag(Lifetime lifetime, u64 sequence = 0)
@@ -73,14 +78,14 @@ namespace ember::memory
 	// The lock protects free bits and ownership changes. Atomic owner tags let
 	// diagnostics inspect ownership without that lock. Reading block contents
 	// still requires the caller's lifetime synchronization.
-	class BlockHeap final
+	class TaggedHeap final
 	{
 	public:
-		BlockHeap() = default;
-		~BlockHeap();
+		TaggedHeap() = default;
+		~TaggedHeap();
 
-		BlockHeap(const BlockHeap&) = delete;
-		BlockHeap& operator=(const BlockHeap&) = delete;
+		TaggedHeap(const TaggedHeap&) = delete;
+		TaggedHeap& operator=(const TaggedHeap&) = delete;
 
 		// Storage needed for capacity bytes of blocks and their bookkeeping.
 		// The payload rounds up to whole blocks and the bookkeeping to whole pages.

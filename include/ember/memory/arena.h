@@ -1,7 +1,7 @@
 #pragma once
 
 // Allocations share a lifetime. Each thread advances a cursor through its own
-// blocks; only a refill visits the shared block heap.
+// blocks; only a refill visits the shared tagged heap.
 //
 // Individual allocations stay put until their tag is freed. end() leaves the
 // blocks in place so readers can finish before the caller returns them:
@@ -9,7 +9,10 @@
 //     scratch.begin(block_tag(Lifetime::Frame, N));
 //     ... update and render allocate from registered workers ...
 //     const BlockTag done = scratch.end();
-//     blocks->free(done); // Once every CPU and GPU reader has finished.
+//     tagged_heap->free(done); // Once every CPU and GPU reader has finished.
+//
+// An arena over a GPU pool's tagged heap works the same way and hands out mapped
+// pointers; the pool turns them into buffer offsets with TaggedHeap::base().
 //
 // Fibers may resume on another worker, so each allocation looks up the current
 // thread's slot through an out-of-line call. Allocation does not suspend the
@@ -27,7 +30,7 @@
 #include <ember/core/types.h>
 #include <ember/memory/alignment.h>
 #include <ember/memory/allocator.h>
-#include <ember/memory/block_heap.h>
+#include <ember/memory/tagged_heap.h>
 
 #include <atomic>
 #include <cstddef>
@@ -66,7 +69,7 @@ namespace ember::memory
 
 		// The block heap and diagnostic name must outlive the arena's use of them.
 		// Call begin() before allocating.
-		void initialize(BlockHeap* blocks, const char* name);
+		void initialize(TaggedHeap* blocks, const char* name);
 
 		// Returns blocks still owned by the current tag, then detaches from the heap.
 		// All users must have finished first. Earlier tags remain the caller's
@@ -95,7 +98,7 @@ namespace ember::memory
 
 		// Requires an active lifetime. A zero-byte request consumes one byte so it
 		// still gets a distinct live address. Shipping builds omit tag accounting.
-		[[nodiscard]] EMBER_FINLINE void* allocate(Tag tag, size_t size,
+		[[nodiscard]] EMBER_FINLINE void* allocate(MemoryTag tag, size_t size,
 		    size_t alignment = DEFAULT_ALIGNMENT)
 		{
 			EMBER_ASSERT_MSG(m_active, "allocating from an arena between end() and begin()");
@@ -120,7 +123,7 @@ namespace ember::memory
 		}
 
 		// Arena tracking records subsystem totals, not individual allocation sites.
-		void* allocate(Tag tag, size_t size, size_t alignment, std::source_location) override
+		void* allocate(MemoryTag tag, size_t size, size_t alignment, std::source_location) override
 		{
 			return allocate(tag, size, alignment);
 		}
@@ -132,7 +135,8 @@ namespace ember::memory
 		// Block ownership alone cannot detect stale pointers after address reuse.
 		bool owns(const void* ptr) const
 		{
-			return m_blocks != nullptr && m_tag != NO_BLOCK_TAG && m_blocks->tag_of(ptr) == m_tag;
+			return m_tagged_heap != nullptr && m_tag != NO_BLOCK_TAG &&
+			       m_tagged_heap->tag_of(ptr) == m_tag;
 		}
 
 		bool is_active() const
@@ -155,7 +159,7 @@ namespace ember::memory
 		// Subsystem bytes allocated since begin(). Safe to sample during allocation,
 		// but the slots are read separately, so the total is not a synchronized
 		// snapshot. Counts reset at the next begin(). Shipping builds return zero.
-		u64 tag_bytes(Tag tag) const;
+		u64 tag_bytes(MemoryTag tag) const;
 
 	private:
 		// Keep each thread's cursor on separate cache lines to avoid false sharing.
@@ -171,7 +175,7 @@ namespace ember::memory
 			u32 blocks = 0;
 
 #if EMBER_MEMORY_TRACKING >= 1
-			std::atomic<u64> bytes_by_tag[TAG_COUNT];
+			std::atomic<u64> bytes_by_tag[MEMORY_TAG_COUNT];
 #endif
 
 			void clear()
@@ -191,7 +195,7 @@ namespace ember::memory
 			}
 		};
 
-		EMBER_FINLINE static void charge(Slot& slot, Tag tag, size_t bytes)
+		EMBER_FINLINE static void charge(Slot& slot, MemoryTag tag, size_t bytes)
 		{
 #if EMBER_MEMORY_TRACKING >= 1
 			std::atomic<u64>& held = slot.bytes_by_tag[(size_t)tag];
@@ -214,7 +218,7 @@ namespace ember::memory
 		void forget_blocks();
 
 		Slot m_slots[MAX_THREADS];
-		BlockHeap* m_blocks = nullptr;
+		TaggedHeap* m_tagged_heap = nullptr;
 		BlockTag m_tag = NO_BLOCK_TAG;
 		const char* m_name = "arena";
 		bool m_active = false;

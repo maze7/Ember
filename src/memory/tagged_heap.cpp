@@ -1,6 +1,6 @@
 #include <ember/core/profile.h>
 #include <ember/memory/alignment.h>
-#include <ember/memory/block_heap.h>
+#include <ember/memory/tagged_heap.h>
 #include <ember/memory/virtual_memory.h>
 
 #include <algorithm>
@@ -27,7 +27,7 @@ namespace ember::memory
 		}
 	}
 
-	size_t BlockHeap::region_size(size_t capacity, size_t block_size)
+	size_t TaggedHeap::region_size(size_t capacity, size_t block_size)
 	{
 		EMBER_ASSERT(std::has_single_bit(block_size));
 
@@ -35,12 +35,12 @@ namespace ember::memory
 		return bookkeeping_size(rounded / block_size) + rounded;
 	}
 
-	BlockHeap::~BlockHeap()
+	TaggedHeap::~TaggedHeap()
 	{
 		shutdown();
 	}
 
-	bool BlockHeap::initialize(void* region, size_t size, size_t block_size)
+	bool TaggedHeap::initialize(void* region, size_t size, size_t block_size)
 	{
 		EMBER_ASSERT_MSG(m_base == nullptr, "initialize runs once");
 		EMBER_ASSERT(region != nullptr);
@@ -92,7 +92,7 @@ namespace ember::memory
 		return true;
 	}
 
-	void BlockHeap::shutdown()
+	void TaggedHeap::shutdown()
 	{
 		if (m_base == nullptr)
 		{
@@ -114,7 +114,7 @@ namespace ember::memory
 		m_peak_blocks.store(0, std::memory_order_relaxed);
 	}
 
-	u32 BlockHeap::find_run(u32 count) const
+	u32 TaggedHeap::find_run(u32 count) const
 	{
 		// For a single block, skip full words and take the lowest free bit.
 		// m_hint avoids revisiting words that earlier scans already found full.
@@ -151,7 +151,7 @@ namespace ember::memory
 		return NO_BLOCK;
 	}
 
-	void* BlockHeap::allocate(u32 count, BlockTag tag)
+	void* TaggedHeap::allocate(u32 count, BlockTag tag)
 	{
 		EMBER_PROFILE_SCOPE_C("BlockAllocator::allocate", PROFILE_COLOR_MEMORY);
 		EMBER_ASSERT(m_base != nullptr);
@@ -194,7 +194,7 @@ namespace ember::memory
 		return first == NO_BLOCK ? nullptr : m_base + (size_t)first * m_block_size;
 	}
 
-	u32 BlockHeap::free(BlockTag tag)
+	u32 TaggedHeap::free(BlockTag tag)
 	{
 		EMBER_PROFILE_SCOPE_C("BlockAllocator::free", PROFILE_COLOR_MEMORY);
 		EMBER_ASSERT(m_base != nullptr);
@@ -241,7 +241,7 @@ namespace ember::memory
 		return freed;
 	}
 
-	BlockTag BlockHeap::tag_of(const void* ptr) const
+	BlockTag TaggedHeap::tag_of(const void* ptr) const
 	{
 		if (!owns(ptr))
 		{
@@ -252,7 +252,7 @@ namespace ember::memory
 		return m_tags[block].load(std::memory_order_relaxed);
 	}
 
-	u32 BlockHeap::blocks_owned(BlockTag tag) const
+	u32 TaggedHeap::blocks_owned(BlockTag tag) const
 	{
 		u32 owned = 0;
 		for (u32 block = 0; block < m_block_count; ++block)
